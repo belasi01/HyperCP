@@ -25,17 +25,27 @@ class RawFileReader:
         # sp2 = hdr.rfind(b" ") # returns the highest index where substring is found
         sp2 = hdr.find(b"(") - 1
 
-        if sys.version_info[0] < 3:
-            str1 = hdr[sp1+1:sp2]
-            str2 = hdr[sp2+2:end-1]
-        else:
-            str1 = hdr[sp1+1:sp2].decode('utf-8')
-            str2 = hdr[sp2+2:end-1].decode('utf-8')
-        #print(str1, str2)
+        try:
+            if sys.version_info[0] < 3:
+                str1 = hdr[sp1+1:sp2]
+                str2 = hdr[sp2+2:end-1]
+            else:
+                str1 = hdr[sp1+1:sp2].decode('utf-8')
+                str2 = hdr[sp2+2:end-1].decode('utf-8')
+        #  Add this piece of code to handle accent in the header of the binary files (Simon Bélanger)
+        except UnicodeDecodeError as e:
+            # Fallback for decoding errors
+            print(f"Decoding error: {e}")
+            str1 = hdr[sp1 + 1:sp2].decode('iso-8859-1', errors='replace')
+            str2 = hdr[sp2 + 2:end - 1].decode('iso-8859-1', errors='replace')
+        # =====
 
-        if len(str1) == 0:
+        # Handle missing data
+        if len(str1.strip()) == 0:
             str1 = "Missing"
-        return (str2, str1)
+
+        return (str2.strip(), str1.strip())
+
 
     # Reads a raw file
     @staticmethod
