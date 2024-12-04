@@ -392,6 +392,14 @@ def interpn_chunked(x, y, xi, chunked_axis=2, cache_size=(16 * 10 ** 6) / 4):
     # y: skyrad0 (7x4x92746x131)
     # xi: array(arrays(0:3)) env['zen_sun'](1), env['od'](1), db_idx(92476), sensor['wv'](depends on sensor))
 
+    # Added by Simon Belanger to deal with cases when xi are out of range (only SZA and OD)
+    if xi[0] > x[0].max():
+        print(f"Sun zenith angle out of range {xi[0] }; use {x[0].max()} for Zhang interpolation")
+        xi = [xi[0].max(), xi[1], xi[2], xi[3]]
+    if xi[1] > x[1].max():
+        print(f"Aerosol optical depth out of range {xi[1]}; use {x[1].max()} for Zhang interpolation")
+        xi = [xi[0], xi[1].max(), xi[2], xi[3]]
+
     ndim = len(x)
     chunk = (y.size * y.dtype.itemsize) / cache_size  # TODO Optimize chunk size automatically based on cache size
     if chunk > 1:
@@ -444,6 +452,22 @@ def get_sky_sun_rho(env, sensor, round4cache=False):
     if round4cache:
         env['wind'] = round(env['wind'], 1)
         sensor['ang'] = np.round(sensor['ang'], 0)
+
+    #######
+    # Added by Simon Belanger to deal with cases where env data are out of range
+    tmp = env # store the actual data temporally
+    if env['zen_sun'] > db['zen_sun'].max():
+        print(f"Sun zenith angle out of range {env['zen_sun']}; use {db['zen_sun'].max()}")
+        env['zen_sun'] = db['zen_sun'].max()
+    if env['od'] > db['od'].max():
+        print(f"Aerosol optical depth out of range {env['od']}; use {db['od'].max()}")
+        env['od'] = db['od'].max()
+    if env['wind'] > db['wind'].max():
+        print(f"Wind speed out of range {env['wind']}; use {db['wind'].max()}")
+        env['wind'] = db['wind'].max()
+    #######
+
+
 
     # Change units
     sensor['ang2'] = sensor['ang'] + np.array([0, 180])

@@ -95,7 +95,13 @@ class ProcessL2:
                 msg = 'Bad NIR Correction. Revert to No NIR correction.'
                 print(msg)
                 Utilities.writeLogFile(msg)
-                rrsNIRCorr = 0
+                #   commented by Simo Belanger to continue processing anyway
+                #   rrsNIRCorr = 0
+                msg = 'The minimum Rrs values betewenn 700 to 800 is'
+                print(msg)
+                print(rrsNIRCorr)
+                print("process with negative NIR correction")
+
             # Subtract average from each waveband
             for k in rrsSlice:
                 if (k == 'Datetime') or (k == 'Datetag') or (k == 'Timetag2'):
@@ -622,9 +628,9 @@ class ProcessL2:
             startLength = len(timeStamp)
             newTimeStamp = []
 
-            # msg = f'Eliminate data between: {dateTime}'
-            # print(msg)
-            # Utilities.writeLogFile(msg)
+            msg = f'Eliminate data between: {dateTime}'
+            print(msg)
+            Utilities.writeLogFile(msg)
 
             start = dateTime[0]
             stop = dateTime[1]
