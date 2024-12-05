@@ -32,28 +32,29 @@ from Main import Command
 MULTI_TASK = True  # Multiple threads for HyperSAS (any level) or TriOS (only L1A and up)
 MULTI_LEVEL = False  # Process raw (L0) to Level-2 (L2)
 CLOBBER = True      # True overwrites existing files
-PROC_LEVEL = "L1A"   # Process to this level: L1A, L1AQC, L1B, LBQC, L2 (ignored for MULTI_LEVEL)
+PROC_LEVEL = "L2"   # Process to this level: L1A, L1AQC, L1B, LBQC, L2 (ignored for MULTI_LEVEL)
 
 # Dataset options
-# PLATFORM = "pySAS"
-PLATFORM = "Manual_TriOS"
-# INST_TYPE = "SEABIRD"  # SEABIRD or TRIOS; defines raw file naming
-INST_TYPE = "TRIOS"
-CRUISE = "FICE22"
+PLATFORM = "pySAS"
+#PLATFORM = "Manual_TriOS"
+INST_TYPE = "SEABIRD"  # SEABIRD or TRIOS; defines raw file naming
+#INST_TYPE = "TRIOS"
+CRUISE = "HyperSAS_VITALS_2015"
 # L1B_REGIME: Optional. [Default, Class, Full]
 #   Denote FRM processing regime and use appropriately named subdirectories.
 #   This requires a custom Configuration file (e.g., "FICE22_pySAS_Class.cfg"). Set this up in the GUI.
-L1B_REGIME = ""
+L1B_REGIME = "Class"
 
 # L2_VERSION: Optional. [M99NN, M99MA, M99SimSpec, Z17NN, etc.]
 #   Denote a special output path for Level-2 processing alternatives.
-L2_VERSION = ""
+L2_VERSION = "M99MA"
 
 #################################
 ## PATH options
 PATH_HCP = os.path.dirname(os.path.abspath(__file__))  # Path to HyperCP repository on host
 # PATH_DATA = f"{PATH_OS}/Projects/HyperPACE/field_data/HyperSAS/{CRUISE}"  # Top level data directory containing RAW/ and ancillary file.
-PATH_DATA = os.path.join(PATH_HCP,'Data','Sample_Data',PLATFORM)
+#PATH_DATA = os.path.join(PATH_HCP,'Data','Sample_Data',PLATFORM)
+PATH_DATA = "/Volumes/aquatel-data/homeData/Insitu/VITALS/2015/L2/20150506_StationCapeRace/HyperSAS/"
 ##################################
 
 if PLATFORM.lower == "Manual_TriOS":
