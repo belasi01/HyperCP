@@ -36,12 +36,8 @@ class RawFileReader:
         except UnicodeDecodeError as e:
             # Fallback for decoding errors
             print(f"Decoding error: {e}")
-            #str1 = hdr[sp1 + 1:sp2].decode('iso-8859-1', errors='replace')
-            #str2 = hdr[sp2 + 2:end - 1].decode('iso-8859-1', errors='replace')
-            #str1 = hdr[sp1 + 1:sp2].decode('iso-8859-1', errors='replace').encode('utf-8').decode('utf-8')
-            #str2 = hdr[sp2 + 2:end - 1].decode('iso-8859-1', errors='replace').encode('utf-8').decode('utf-8')
-            str1 = hdr[sp1 + 1:sp2].decode('iso-8859-1', 'ignore') # will remove the accent character
-            str2 = hdr[sp2 + 2:end - 1].decode('iso-8859-1', 'ignore')
+            str1 = hdr[sp1 + 1:sp2].decode('utf-8', 'ignore') # will remove the accent character
+            str2 = hdr[sp2 + 2:end - 1].decode('utf-8', 'ignore')
 
             # Ensure all data is in UTF-8
         #if sys.version_info[0] >= 3:
