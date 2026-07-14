@@ -21,7 +21,6 @@ from add_sathdr_2_raw import add_sathdr_2_raw
 # Définir le chemin vers vos scripts de traitement personnels
 # Définir le chemin vers HyperCP
 #PATH_HCP = "/Users/simonbelanger/PythonProjects/HyperCP/"
-#PATH_MY_SCRIPTS = os.path.join(PATH_HCP, "MyScripts")
 
 def load_pipeline_config(config_path):
     """Parse un fichier .env et injecte les variables dans le scope global."""
@@ -45,6 +44,7 @@ env = load_pipeline_config(os.path.join(MY_DIR, "pipeline_config.env"))
 
 # --- VARIABLES DYNAMIQUES PORTABLES ---
 PATH_HCP = env["PATH_HCP"]
+PATH_MY_SCRIPTS = os.path.join(PATH_HCP, "MyScripts")
 CRUISE = env["CRUISE"]
 EXPERIMENT = env["EXPERIMENT"]
 MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
