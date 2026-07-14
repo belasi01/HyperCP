@@ -152,27 +152,20 @@ def plot_top2_methods_comparison(base_path, date_str, top1_method, top2_method, 
 def plot_top4_methods_with_map(base_path, date_str, top_methods, df_ranked, time_color_map):
     """
     Génère une figure diagnostic avancée :
-    - 4 panels (2x2) isolés en haut pour les spectres.
+    - 4 panels (2x2) isolés en haut pour les spectres (en anglais).
     - 1 grand panel indépendant en bas prenant 100% de la largeur pour la carte.
+    - 1 insert dézoomé (InsetValue) au 1:1 000 000 pour voir la côte élargie.
     """
     # On agrandit la figure pour donner de l'espace vertical
     fig = plt.figure(figsize=(18, 14))
 
     # --- LES SPECTRES EN HAUT (2x2) ---
-    # On utilise un découpage virtuel sur une grille de 3 lignes x 2 colonnes
     ax1 = plt.subplot(3, 2, 1)
     ax2 = plt.subplot(3, 2, 2)
     ax3 = plt.subplot(3, 2, 3)
     ax4 = plt.subplot(3, 2, 4)
 
-    # --- LA CARTE EN BAS (PLEINE LARGEUR INDÉPENDANTE) ---
-    # Au lieu d'utiliser subplot qui est contraint par les colonnes du haut,
-    # on définit manuellement une zone rectangulaire (X, Y, Largeur, Hauteur) tout en bas.
-    # [Marge_Gauche, Marge_Bas, Largeur, Hauteur] -> Largeur à 0.82 prend toute la page !
-    ax_map = fig.add_axes([0.09, 0.12, 0.82, 0.22], projection=ccrs.PlateCarree())
-
     axes_spectra = [ax1, ax2, ax3, ax4]
-
 
     # Préparation de la colormap pour la Colorbar du bas
     all_times = sorted(df_ranked["Timetag2"].unique())
@@ -200,95 +193,127 @@ def plot_top4_methods_with_map(base_path, date_str, top_methods, df_ranked, time
                         color = time_color_map[row["Timetag2"]]
                         ax.plot(wavelengths, rrs_spectrum, color=color, alpha=0.5, linewidth=1)
 
-        ax.set_title(f"Rang #{idx + 1} : {method_name}", fontsize=11, fontweight='bold')
-        ax.set_xlim(350, 900)
+        ax.set_title(f"Rank #{idx + 1}: {method_name}", fontsize=16, fontweight='bold')
+        ax.set_xlim(380, 800)
         ax.grid(True, linestyle='--', alpha=0.3)
         ax.axhline(0, color='black', linewidth=0.8, linestyle='-', alpha=0.5)
 
         if idx >= 2:
-            ax.set_xlabel("Longueur d'onde (nm)", fontweight='bold')
+            ax.set_xlabel("Wavelength (nm)", fontweight='bold', fontsize=14)
         if idx % 2 == 0:
-            ax.set_ylabel("$R_{rs}$ ($sr^{-1}$)", fontweight='bold')
+            ax.set_ylabel("$R_{rs}$ ($sr^{-1}$)", fontweight='bold',fontsize=14)
 
     # ---------------------------------------------------------------------------
-    # 3. TRACÉ DE LA CARTE DE LOCALISATION AVEC VRAI LAND MASK (CARTOPY)
+    # 2. TRACÉ DE LA CARTE PRINCIPALE AVEC LAND MASK (CARTOPY)
     # ---------------------------------------------------------------------------
-
-    # On recrée l'axe de la carte avec une projection géographique (PlateCarree)
-    ax_map.remove()  # On enlève l'ancien axe standard
-    ax_map = plt.subplot(3, 2, (5, 6), projection=ccrs.PlateCarree())  # On le recrée avec Cartopy
+    ax_map = plt.subplot(3, 2, (5, 6), projection=ccrs.PlateCarree())
 
     df_unique_casts = df_ranked[df_ranked["Method"] == top_methods[0]].sort_values(by="Timetag2")
 
-    # Détermination des frontières de votre zone d'étude
-    lon_min, lon_max = df_unique_casts["Longitude"].min() - 0.2, df_unique_casts["Longitude"].max() + 0.2
-    lat_min, lat_max = df_unique_casts["Latitude"].min() - 0.2, df_unique_casts["Latitude"].max() + 0.2
-
+    # Détermination des frontières de votre zone d'étude (Zoomé serré sur le trajet)
+    lon_min, lon_max = df_unique_casts["Longitude"].min() - 0.15, df_unique_casts["Longitude"].max() + 0.15
+    lat_min, lat_max = df_unique_casts["Latitude"].min() - 0.1, df_unique_casts["Latitude"].max() + 0.1
     ax_map.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
 
-    # --- LE COULISSAGE DU LAND MASK ET DE L'OCÉAN ---
-    # 1. Fond marin bleu océan clair
+    # Éléments cartographiques haute résolution (10m)
     ax_map.add_feature(cfeature.OCEAN.with_scale('10m'), facecolor='#e0f3ff')
-    # 2. Masque de terre (Land Mask) beige/gris géologique propre
     ax_map.add_feature(cfeature.LAND.with_scale('10m'), facecolor='#f4f3ef', edgecolor='#bdc3c7', linewidth=0.5)
-    # 3. Ajout des rivières et lacs majeurs (pour le complexe du Saint-Laurent)
     ax_map.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='#e0f3ff')
     ax_map.add_feature(cfeature.RIVERS.with_scale('10m'), edgecolor='#e0f3ff', linewidth=0.5)
 
-    # Ajout du quadrillage SIG avec étiquettes de Lat/Lon de chaque côté
+    # Grille géographique SIG
     gl = ax_map.gridlines(draw_labels=True, linestyle=':', alpha=0.5, color='gray')
-    gl.top_labels = False  # On cache les labels du haut pour ne pas surcharger
-    gl.right_labels = False  # On cache les labels de droite
-    gl.xlabel_style = {'size': 9, 'weight': 'bold'}
-    gl.ylabel_style = {'size': 9, 'weight': 'bold'}
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'size': 12, 'weight': 'bold'}
+    gl.ylabel_style = {'size': 12, 'weight': 'bold'}
 
-    # Tracé de la trajectoire (Ligne de navigation)
+    # Tracé du trajet du navire et des points de stations
     ax_map.plot(df_unique_casts["Longitude"], df_unique_casts["Latitude"],
-                color="#7f8c8d", linestyle="-", linewidth=2, transform=ccrs.PlateCarree(), zorder=4)
+                color="#7f8c8d", linestyle="-", linewidth=2.5, transform=ccrs.PlateCarree(), zorder=4)
 
     # Tracé des stations de mesure (Points Viridis)
-    for _, row in df_unique_casts.iterrows():
+    for idx, (pandas_idx, row) in enumerate(df_unique_casts.iterrows()):
         color = time_color_map[row["Timetag2"]]
         ax_map.scatter(row["Longitude"], row["Latitude"],
-                       color=color, edgecolors='black', s=140, zorder=5, linewidth=1.0,
+                       color=color, edgecolors='black', s=160, zorder=5, linewidth=1.2,
                        transform=ccrs.PlateCarree())
 
-        t_raw = row["Timetag2"]
-        time_lbl = f"{int(t_raw // 10000000):02d}:{int((t_raw % 10000000) // 100000):02d}"
-        ax_map.text(row["Longitude"], row["Latitude"], f"  {time_lbl}",
-                    fontsize=9, fontweight='bold', alpha=0.9, va='center', zorder=6,
-                    transform=ccrs.PlateCarree())
+        # --- FILTRE D'ANNOTATION INTELLIGENT ---
+        # Affiche l'heure uniquement pour le premier point, le dernier point, et un point sur 5
+        if idx == 0 or idx == len(df_unique_casts) - 1 or idx % 5 == 0:
+            t_raw = row["Timetag2"]
+            time_lbl = f"{int(t_raw // 10000000):02d}:{int((t_raw % 10000000) // 100000):02d}"
 
-    ax_map.set_title("🌐 Cartographie de la Campagne & Route du Navire (Pleine Largeur avec Land Mask)", fontsize=12,
-                     fontweight='bold')
+            ax_map.text(row["Longitude"], row["Latitude"], f"  {time_lbl}",
+                        fontsize=12, fontweight='bold', alpha=0.85, va='center', zorder=6,
+                        transform=ccrs.PlateCarree())
+
+    ax_map.set_title("🌐 Campaign Mapping & Vessel Track", fontsize=15,
+                     fontweight='bold', pad=12)
     ax_map.set_aspect('auto')
 
-    # 3. POSITIONNEMENT DE LA COLORBAR (TOUT EN BAS)
+    # ---------------------------------------------------------------------------
+    # 3. CRÉATION DE L'INSERT RÉGIONAL DÉZOOMÉ (MINI-MAP AU 1:1 000 000)
+    # ---------------------------------------------------------------------------
+    # On ajoute un axe flottant en haut à droite de l'axe de la carte principale
+    # [X_gauche, Y_bas, Largeur, Hauteur] relatifs à la figure
+    #ax_inset = fig.add_axes([0.76, 0.15, 0.13, 0.13], projection=ccrs.PlateCarree())
+    # [X_gauche, Y_bas, Largeur, Hauteur]
+    ax_inset = fig.add_axes([0.15, -0.05, 0.14, 0.14], projection=ccrs.PlateCarree())
+
+    # Élargissement significatif des frontières géographiques (Dézoom à large échelle)
+    inset_lon_min, inset_lon_max = df_unique_casts["Longitude"].mean() - 5, df_unique_casts["Longitude"].mean() + 5
+    inset_lat_min, inset_lat_max = df_unique_casts["Latitude"].mean() - 3, df_unique_casts["Latitude"].mean() + 3
+    ax_inset.set_extent([inset_lon_min, inset_lon_max, inset_lat_min, inset_lat_max], crs=ccrs.PlateCarree())
+
+    # Couches cartographiques simplifiées (50m) pour l'insert régional
+    ax_inset.add_feature(cfeature.OCEAN.with_scale('50m'), facecolor='#e0f3ff')
+    ax_inset.add_feature(cfeature.LAND.with_scale('50m'), facecolor='#f4f3ef', edgecolor='#bdc3c7', linewidth=0.4)
+    ax_inset.add_feature(cfeature.LAKES.with_scale('50m'), facecolor='#e0f3ff')
+
+    # Dessiner un rectangle rouge représentant la zone d'étude zoomée
+    import matplotlib.patches as mpatches
+    rect = mpatches.Rectangle((lon_min, lat_min), lon_max - lon_min, lat_max - lat_min,
+                              fill=False, edgecolor='red', linewidth=1., zorder=10,
+                              transform=ccrs.PlateCarree())
+    ax_inset.add_patch(rect)
+
+    # Tracer la ligne de route en miniature pour bien la situer dans le Golfe/Estuaire
+    ax_inset.plot(df_unique_casts["Longitude"], df_unique_casts["Latitude"],
+                  color="green", linestyle="-", linewidth=1., transform=ccrs.PlateCarree(), zorder=11)
+
+    ax_inset.set_title("Regional Context", fontsize=12, fontweight='bold')
+    ax_inset.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False, labelbottom=False,
+                         labelleft=False)
+
+    # ---------------------------------------------------------------------------
+    # 4. POSITIONNEMENT DE LA COLORBAR (TOUT EN BAS)
+    # ---------------------------------------------------------------------------
     sm = cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
 
-    cbar_ax = fig.add_axes([0.15, 0.02, 0.7, 0.015])
+    cbar_ax = fig.add_axes([0.35, 0.02, 0.55, 0.015])
     cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
 
     t_start, t_end = all_times[0], all_times[-1]
     cbar.set_ticks([0, len(all_times) - 1])
     cbar.set_ticklabels([
-        f"Début : {int(t_start // 10000000):02d}:{int((t_start % 10000000) // 100000):02d} UTC",
-        f"Fin : {int(t_end // 10000000):02d}:{int((t_end % 10000000) // 100000):02d} UTC"
+        f"Start: {int(t_start // 10000000):02d}:{int((t_start % 10000000) // 100000):02d} UTC",
+        f"End: {int(t_end // 10000000):02d}:{int((t_end % 10000000) // 100000):02d} UTC"
     ])
-    cbar.set_label("Progression temporelle le long de la trajectoire (Palette Viridis)", fontweight='bold', fontsize=10)
+    cbar.set_label("Time progression along the trackline", fontweight='bold', fontsize=16)
 
-    fig.suptitle(f"Analyse Diagnostic Multi-Méthodes L2 — pySAS ({date_str})", fontsize=16, fontweight='bold', y=0.95)
+    fig.suptitle(f"Multi-Method L2 Diagnostic Analysis — pySAS ({date_str})", fontsize=20, fontweight='bold', y=0.95)
 
     # Sauvegarde
     analysis_dir = os.path.join(base_path, "AnalysisComparison")
     os.makedirs(analysis_dir, exist_ok=True)
     out_png = os.path.join(analysis_dir, f"L2_Top4_Methods_With_Map_{date_str}.png")
 
-    # Ajustement serré pour éviter que le PDF ne coupe l'image
     plt.savefig(out_png, dpi=160, bbox_inches='tight')
     plt.close()
-    print(f"🚀 Figure et Carte exportée : {out_png}")
+    print(f"🚀 Figure and Context Map exported: {out_png}")
     return out_png
 
 
@@ -302,17 +327,17 @@ def generate_pdf_report(base_path, date_str, global_ranking, fig_path):
 
     # Titre du rapport (Syntaxe moderne : new_x et new_y remplacent ln=True)
     pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, "Rapport de Diagnostic L2 pySAS - Mission Amundsen",
+    pdf.cell(0, 10, "pySAS L2 Diagnostic Report - Amundsen Cruise",
              new_x="LMARGIN", new_y="NEXT", align="C")
 
     pdf.set_font("Helvetica", "", 12)
-    pdf.cell(0, 10, f"Date des donnees : {date_str} | Rapport genere le : {datetime.now().strftime('%Y-%m-%d')}",
+    pdf.cell(0, 10, f"Data Date: {date_str} | Report Generated On: {datetime.now().strftime('%Y-%m-%d')}",
              new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(10)
 
     # Section 1 : Classement
     pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 10, "1. CLASSEMENT GLOBAL DES METHODES (Base sur le rang moyen du QWIP)",
+    pdf.cell(0, 10, "1. GLOBAL METHOD RANKING (Based on QWIP Mean Score)",
              new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
     pdf.ln(2)
@@ -320,9 +345,9 @@ def generate_pdf_report(base_path, date_str, global_ranking, fig_path):
     # En-tête du tableau dans le PDF
     pdf.set_fill_color(230, 230, 230)
     pdf.set_font("Helvetica", "B", 10)
-    pdf.cell(40, 8, "Position", border=1, align="C", fill=True)
-    pdf.cell(60, 8, "Methode de traitement", border=1, align="C", fill=True)
-    pdf.cell(60, 8, "Note Moyenne (Rang)", border=1, align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(40, 8, "Rank", border=1, align="C", fill=True)
+    pdf.cell(60, 8, "Processing Method", border=1, align="C", fill=True)
+    pdf.cell(60, 8, "Mean Score (Rank)", border=1, align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font("Helvetica", "", 10)
     for rank, (method, avg_quote) in enumerate(global_ranking.items(), 1):
@@ -335,19 +360,19 @@ def generate_pdf_report(base_path, date_str, global_ranking, fig_path):
 
         pdf.cell(40, 8, f"#{rank}", border=1, align="C", fill=fill_bool)
         pdf.cell(60, 8, f"{method}", border=1, align="C", fill=fill_bool)
-        pdf.cell(60, 8, f"{avg_quote:.2f} / 6", border=1, align="C", fill=fill_bool, new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(60, 8, f"{avg_quote:.2f} / {len(global_ranking)}", border=1, align="C", fill=fill_bool, new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(5)
     pdf.set_font("Helvetica", "B", 11)
 
     # --- CORRECTION DE L'ÉMOJI ICI (Remplacé par [TOP]) ---
-    pdf.cell(0, 10, f"[BEST] Methode recommandee pour cette journee : {global_ranking.index[0]}",
+    pdf.cell(0, 10, f"[BEST] Recommended method for this day: {global_ranking.index[0]}",
              new_x="LMARGIN", new_y="NEXT")
     pdf.ln(10)
 
     # Section 2 : Figure
     pdf.set_font("Helvetica", "B", 13)
-    pdf.cell(0, 10, "2. COMPARAISON SPECTRALE DU TOP 2 DES METHODES",
+    pdf.cell(0, 10, "2. SPECTRAL COMPARISON OF THE TOP 2 METHODS",
              new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
@@ -357,7 +382,29 @@ def generate_pdf_report(base_path, date_str, global_ranking, fig_path):
 
     out_pdf = os.path.join(base_path, f"L2_Processing_Report_{date_str}.pdf")
     pdf.output(out_pdf)
-    print(f"📄 Rapport PDF final genere avec succes : {out_pdf}")
+    print(f"📄 Final PDF Report successfully generated: {out_pdf}")
+
+# ===========================================================================
+# 🛠️ PARSING DU FICHIER DE CONFIGURATION DYNAMIQUE (.ENV)
+# ===========================================================================
+# Fonction de lecture rapide
+def load_pipeline_config(config_path):
+    config = {}
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file '{config_path}' not found.")
+    with open(config_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if '#' in line:
+                line = line.split('#')[0].strip()
+            if '=' in line:
+                key, val = line.split('=', 1)
+                config[key.strip()] = val.strip()
+    return config
+
+
 
 if __name__ == "__main__":
 
@@ -368,15 +415,45 @@ if __name__ == "__main__":
     except ImportError:
         HAS_GEOJSON = False
 
-    DATE_STR = "20260705"
+        #DATE_STR = "20260705"
 
-    BASE_PATH = "/Users/simonbelanger/Data/Amundsen/2026_LEG_00/L1/pySAS/"
+        #BASE_PATH = "/Users/simonbelanger/Data/Amundsen/2026_LEG_00/L1/pySAS/"
+
+    # Détermination du dossier actuel du script pour cibler le .env
+    MY_DIR = os.path.dirname(os.path.abspath(__file__))
+    env = load_pipeline_config(os.path.join(MY_DIR, "pipeline_config.env"))
+
+    import sys
+
+    if len(sys.argv) > 1:
+        DATE_STR = sys.argv[1]
+    else:
+        # Si aucun argument n'est passé au script python de diagnostic,
+        # on prend par défaut la date d'hier calculée par le système
+        from datetime import datetime, timedelta
+
+        DATE_STR = (datetime.utcnow() - timedelta(days=1)).strftime('%Y%m%d')
+
+    # Assignation des chemins et des versions
+    MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
+    BASE_PATH = os.path.join(MAIN_DATA_PATH, "pySAS")
+
     ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
     os.makedirs(ANALYSIS_DIR, exist_ok=True)
 
+    # Récupération et parsing propre de votre liste de matrices L2
+    METHODS = [m.strip() for m in env["ALL_L2_VERSIONS"].split(",")]
+
+    print(f"📊 [Diagnostics] Analyzing metrics for date: {DATE_STR}")
+    print(f"📂 Source directory: {BASE_PATH}")
+    print(f"🎯 Methods matrix to evaluate: {METHODS}")
+
+    #ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
+    #os.makedirs(ANALYSIS_DIR, exist_ok=True)
+
 
     #METHODS = ["M99NN", "M99SimSpec", "M99NIR", "3CNN", "3CSimSpec", "3CNIR", "Z17NN", "Z17SimSpec", "Z17NIR"]
-    METHODS = ["M99NN",  "M99NIR", "3CNN",  "3CNIR", "Z17NN", "Z17NIR"]
+    #METHODS = ["M99NN",  "M99NIR", "3CNN",  "3CNIR", "Z17NN", "Z17NIR"]
 
     nb_methods = len(METHODS)
 
@@ -426,7 +503,7 @@ if __name__ == "__main__":
     df_best.to_csv(out_csv_best, index=False)
     print(f"✅ Tableau du classement optimal exporté : {out_csv_best}")
 
- # ---------------------------------------------------------------------------
+    # ---------------------------------------------------------------------------
     # Export 2 : Attribution des notes (Rangs 1 à 6) et Classement Global
     # ---------------------------------------------------------------------------
     ranked_records = []
@@ -464,7 +541,7 @@ if __name__ == "__main__":
     global_ranking = df_ranked.groupby("Method")["Rank_Quote"].mean().sort_values()
 
     for rank, (method, avg_quote) in enumerate(global_ranking.items(), 1):
-        print(f"Position {rank} : {method:<12} | Note moyenne (Rang) : {avg_quote:.2f}/6")
+        print(f"Position {rank} : {method:<12} | Note moyenne (Rang) : {avg_quote:.2f}/{nb_methods}")
 
     out_csv_top = os.path.join(BASE_PATH, f"L2_Global_Leaderboard_{DATE_STR}.csv")
     global_ranking.to_frame(name="Average_Rank_Quote").to_csv(out_csv_top)

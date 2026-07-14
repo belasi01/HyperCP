@@ -58,27 +58,49 @@ dates = args.date
 PROC_LEVEL = args.level
 L2_VERSION = args.version
 time_str = args.time
-#################################
-## PATH options
-##### PLEASE ADJUST THOSE LINES TO MAKE IT WORK ON YOUR SYSTEM OR ON THE SERVER
-CRUISE = "AMD"
-EXPERIMENT = "CASCADE"
-MAIN_DATA_PATH = "/Users/simonbelanger/Data/Amundsen_2026/L1/"
-PATH_DATA = f"{MAIN_DATA_PATH}pySAS/"
-TSG_PATH =  f"{MAIN_DATA_PATH}TSG/"
-ATS_PATH =  f"{MAIN_DATA_PATH}ATS/"
-PATH_ANC = os.path.join(PATH_DATA, "Ancillary", f"{CRUISE}_Ancillary_{dates}.sb")
+# #################################
 
-PATH_CFG = os.path.join(PATH_HCP, "Config", "pySAS_Amundsen_2026_Leg1-3.cfg")
-PATH_HDR = os.path.join(PATH_HCP, "Config", "pySAS_Amundsen_2026_Leg1-3.hdr")
-#### PLEASE List the version you want to generate when you select --level "L2" --version "ALL"
-#ALL_L2_VERSIONS = ["M99SimSpec", "M99NIR", "M99NN","Z17SimSpec", "Z17NIR", "Z17NN","3CSimSpec", "3CNIR", "3CNN"]
-ALL_L2_VERSIONS = ["M99NN","Z17NIR", "Z17NN","3CNIR", "3CNN"]
-##################################
+def load_pipeline_config(config_path):
+    """Parse un fichier .env et injecte les variables dans le scope global."""
+    config = {}
+    if not os.path.exists(config_path):
+        print(f"❌ Critical Error: Configuration file '{config_path}' not found.")
+        sys.exit(1)
+    with open(config_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            key, val = line.split('=', 1)
+            config[key.strip()] = val.strip()
+    return config
+
+# --- CHARGEMENT DU PROFIL ENVIRO ---
+# On cible le fichier .env situé dans le dossier MyScripts/
+MY_DIR = os.path.dirname(os.path.abspath(__file__))
+env = load_pipeline_config(os.path.join(MY_DIR, "pipeline_config.env"))
+
+# --- VARIABLES DYNAMIQUES PORTABLES ---
+PATH_HCP = env["PATH_HCP"]
+CRUISE = env["CRUISE"]
+EXPERIMENT = env["EXPERIMENT"]
+MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
+ROLL_OFFSET = float(env["ROLL_OFFSET"])
+
+PATH_DATA = os.path.join(MAIN_DATA_PATH, "pySAS")
+TSG_PATH = os.path.join(MAIN_DATA_PATH, "TSG")
+ATS_PATH = os.path.join(MAIN_DATA_PATH, "ATS")
+
+PATH_ANC = os.path.join(PATH_DATA, "Ancillary", f"{CRUISE}_Ancillary_{dates}.sb")
+PATH_CFG = os.path.join(PATH_HCP, "Config", env["CFG_FILE_NAME"])
+PATH_HDR = os.path.join(PATH_HCP, "Config", env["HDR_FILE_NAME"])
+
+# Parsing propre de la liste des versions L2 séparées par des virgules
+ALL_L2_VERSIONS = [v.strip() for v in env["ALL_L2_VERSIONS"].split(",")]
 
 #########
 # the pySAS006 has a ROLL of +5° on the benchtop.  This offsset will be subtracted in the L1A file
-ROLL_OFFSET = -5
+#ROLL_OFFSET = -5
 #########
 
 # Dataset options
@@ -90,7 +112,7 @@ L1B_REGIME = ""
 # Batch options
 MULTI_TASK = True  # Multiple threads for HyperSAS (any level) or TriOS (only L1A and up)
 MULTI_LEVEL = False  # Process raw (L0) to Level-2 (L2)
-CLOBBER = True      # True overwrites existing files
+CLOBBER = False      # True overwrites existing files
 
 # Définition automatique des dossiers d'entrée et de sortie selon le niveau demandé
 PATH_INPUT = PATH_DATA
@@ -135,6 +157,7 @@ if not MULTI_LEVEL:
 
     #
 
+
 def run_Command(fp_input_files, output_path=None):
     """Run either directly or using multiprocessor pool below."""
     #   fp_input_files is a string unless TriOS RAW, then list.
@@ -146,14 +169,14 @@ def run_Command(fp_input_files, output_path=None):
     # This will skip the file if either 1) the result exists and no CLOBBER, or
     #   2) the Level failed and produced a report.
     # Override with CLOBBER, above.
-    to_skip = {level: [os.path.basename(fp).split("_" + level)[0]
-            for fp in glob.glob(os.path.join(local_path_output, level, "*"))]
-        + [
-            os.path.basename(fp).split("_" + level)[0]
-            for fp in glob.glob(
-                os.path.join(local_path_output, "Reports", f"*_{level}_fail.pdf"))
-        ]
-        for level in TO_LEVELS}
+    if CLOBBER:
+        to_skip = {level: [] for level in TO_LEVELS}
+    else:
+        # On ne met QUE les fichiers de données qui ont réussi dans la liste à sauter.
+        # On supprime complètement la recherche des "*_fail.pdf" pour qu'ils soient recalculés !
+        to_skip = {level: [os.path.basename(fp).split("_" + level)[0]
+                for fp in glob.glob(os.path.join(local_path_output, level, "*"))]
+            for level in TO_LEVELS}
 
     if MULTI_LEVEL:
         # One or more files. (fp_input_files is a list of one or more files)
@@ -271,6 +294,63 @@ def worker(fp_input_files):
         local_out = os.path.join(PATH_DATA, current_version) if PROC_LEVEL == "L2" else PATH_OUTPUT
         run_Command(file, output_path=local_out)
         print(f"### Finished {os.path.basename(file)}")
+
+
+# ==============================================================================
+# NOUVELLE APPROCHE POUR ÉVITER DE ROULER 3 x les méthodes rho shy
+# ==============================================================================
+from Source.ConfigFile import ConfigFile
+from Source.ProcessL2 import ProcessL2
+
+
+def execute_turbo_L2(root, station, outFilePath_base, model_prefix):
+    """
+    Exécute le traitement L2 de base (NN), puis applique immédiatement
+    les fonctions NIR et SimSpec de la NASA en mémoire avant l'écriture finale.
+    """
+    # 1. Configuration initiale forcée à No Correction (NN)
+    ConfigFile.settings["bL2SimpleNIRCorrection"] = 0
+    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 0
+
+    # Appel de la fonction originale de la NASA pour générer la base NN
+    # (Calcule les moyennes d'ensembles, les géométries solaires et le rho_sky)
+    node_nn = ProcessL2.processL2(root, station)
+
+    # Sauvegarde normale du fichier de base M99NN, Z17NN ou 3CNN
+    # (Ici, le code original d'HyperCP écrit node_nn dans outFilePath_base)
+
+    # ----------------------------------------------------------------------
+    # EXTENSION TURBO UQAR : CLONAGE ET CORRECTIONS EN MÉMOIRE
+    # ----------------------------------------------------------------------
+    # On récupère les structures spécifiques requises par la fonction native
+    sensor = "HYPER"
+    F0 = root.getGroup("CALIBRATION").getDataset("F0")  # Exemple de récupération de F0
+
+    # --- BRANCHEMENT MÉTHODE NIR ---
+    import copy
+    node_nir = copy.deepcopy(node_nn)  # Duplication complète de l'objet en mémoire
+    ConfigFile.settings["bL2SimpleNIRCorrection"] = 1
+    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 0
+
+    # Appel direct de la fonction native de la NASA que vous avez trouvée !
+    ProcessL2.nirCorrection(node_nir, sensor, F0)
+
+    # Modification du chemin de sortie pour le dossier correspondant (ex: M99NIR)
+    outFilePath_nir = outFilePath_base.replace(f"{model_prefix}NN", f"{model_prefix}NIR")
+    # Enregistrement du node_nir via la méthode de sauvegarde d'HyperCP
+
+    # --- BRANCHEMENT MÉTHODE SIMSPEC ---
+    node_sim = copy.deepcopy(node_nn)
+    ConfigFile.settings["bL2SimpleNIRCorrection"] = 0
+    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 1
+
+    # Deuxième appel direct de la fonction native
+    ProcessL2.nirCorrection(node_sim, sensor, F0)
+
+    outFilePath_sim = outFilePath_base.replace(f"{model_prefix}NN", f"{model_prefix}SimSpec")
+    # Enregistrement du node_sim via la méthode de sauvegarde d'HyperCP
+
+    print(f"⚡ [Turbo L2] Applied native NIR & SimSpec corrections in-memory for {model_prefix}")
 
 
 if __name__ == "__main__":
