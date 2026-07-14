@@ -20,8 +20,35 @@ from add_sathdr_2_raw import add_sathdr_2_raw
 
 # Définir le chemin vers vos scripts de traitement personnels
 # Définir le chemin vers HyperCP
-PATH_HCP = "/Users/simonbelanger/PythonProjects/HyperCP/"
-PATH_MY_SCRIPTS = os.path.join(PATH_HCP, "MyScripts")
+#PATH_HCP = "/Users/simonbelanger/PythonProjects/HyperCP/"
+#PATH_MY_SCRIPTS = os.path.join(PATH_HCP, "MyScripts")
+
+def load_pipeline_config(config_path):
+    """Parse un fichier .env et injecte les variables dans le scope global."""
+    config = {}
+    if not os.path.exists(config_path):
+        print(f"❌ Critical Error: Configuration file '{config_path}' not found.")
+        sys.exit(1)
+    with open(config_path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            key, val = line.split('=', 1)
+            config[key.strip()] = val.strip()
+    return config
+
+# --- CHARGEMENT DU PROFIL ENVIRO ---
+# On cible le fichier .env situé dans le dossier MyScripts/
+MY_DIR = os.path.dirname(os.path.abspath(__file__))
+env = load_pipeline_config(os.path.join(MY_DIR, "pipeline_config.env"))
+
+# --- VARIABLES DYNAMIQUES PORTABLES ---
+PATH_HCP = env["PATH_HCP"]
+CRUISE = env["CRUISE"]
+EXPERIMENT = env["EXPERIMENT"]
+MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
+ROLL_OFFSET = float(env["ROLL_OFFSET"])
 
 # Ajouter ce dossier au chemin de recherche de Python
 if PATH_MY_SCRIPTS not in sys.path:
@@ -59,33 +86,6 @@ PROC_LEVEL = args.level
 L2_VERSION = args.version
 time_str = args.time
 # #################################
-
-def load_pipeline_config(config_path):
-    """Parse un fichier .env et injecte les variables dans le scope global."""
-    config = {}
-    if not os.path.exists(config_path):
-        print(f"❌ Critical Error: Configuration file '{config_path}' not found.")
-        sys.exit(1)
-    with open(config_path, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            key, val = line.split('=', 1)
-            config[key.strip()] = val.strip()
-    return config
-
-# --- CHARGEMENT DU PROFIL ENVIRO ---
-# On cible le fichier .env situé dans le dossier MyScripts/
-MY_DIR = os.path.dirname(os.path.abspath(__file__))
-env = load_pipeline_config(os.path.join(MY_DIR, "pipeline_config.env"))
-
-# --- VARIABLES DYNAMIQUES PORTABLES ---
-PATH_HCP = env["PATH_HCP"]
-CRUISE = env["CRUISE"]
-EXPERIMENT = env["EXPERIMENT"]
-MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
-ROLL_OFFSET = float(env["ROLL_OFFSET"])
 
 PATH_DATA = os.path.join(MAIN_DATA_PATH, "pySAS")
 TSG_PATH = os.path.join(MAIN_DATA_PATH, "TSG")
