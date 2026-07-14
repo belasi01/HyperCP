@@ -91,7 +91,7 @@ PATH_DATA = os.path.join(MAIN_DATA_PATH, "pySAS")
 TSG_PATH = os.path.join(MAIN_DATA_PATH, "TSG")
 ATS_PATH = os.path.join(MAIN_DATA_PATH, "ATS")
 
-PATH_ANC = os.path.join(PATH_DATA, "Ancillary", f"{CRUISE}_Ancillary_{dates}.sb")
+PATH_ANC = os.path.join(PATH_DATA, "Ancillary", f"{CRUISE}_{EXPERIMENT}_Ancillary_{dates}.sb")
 PATH_CFG = os.path.join(PATH_HCP, "Config", env["CFG_FILE_NAME"])
 PATH_HDR = os.path.join(PATH_HCP, "Config", env["HDR_FILE_NAME"])
 
