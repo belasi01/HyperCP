@@ -6,6 +6,7 @@ import os
 import glob
 import time
 
+
 from Main import Command
 
 # Run scripted call to single-level or multi-level (L0 - L2) command line calls to HyperCP
@@ -39,13 +40,13 @@ from Main import Command
 MULTI_TASK = True  # Multiple threads for HyperSAS (any level) or TriOS (only L1A and up)
 MULTI_LEVEL = False  # Process raw (L0) to Level-2 (L2)
 CLOBBER = True      # True overwrites existing files
-PROC_LEVEL = "L1A"   # Process to this level: L1A, L1AQC, L1B, LBQC, L2 (ignored for MULTI_LEVEL)
+PROC_LEVEL = "L2"   # Process to this level: L1A, L1AQC, L1B, LBQC, L2 (ignored for MULTI_LEVEL)
 
 # Dataset options
-# PLATFORM = "pySAS"
-PLATFORM = "Manual_TriOS"
-# INST_TYPE = "SEABIRD"  # SEABIRD or TRIOS; defines raw file naming
-INST_TYPE = "TRIOS"
+PLATFORM = "pySAS"
+# PLATFORM = "Manual_TriOS"
+INST_TYPE = "SEABIRD"  # SEABIRD or TRIOS; defines raw file naming
+# INST_TYPE = "TRIOS"
 CRUISE = "FICE22"
 # L1B_REGIME: Optional. [Default, Class, Full]
 #   Denote FRM processing regime and use appropriately named subdirectories.
@@ -54,11 +55,16 @@ L1B_REGIME = ""
 
 # L2_VERSION: Optional. [M99NN, M99MA, M99SimSpec, Z17NN, etc.]
 #   Denote a special output path for Level-2 processing alternatives.
-L2_VERSION = ""
+L2_VERSION = "M99SimSpecBRDFO25"
+# L2_VERSION = "M99NIR"
+# L2_VERSION = "M99NN"
+L2_VERSION = "3CSimSpecBRDFO25"
+# L2_VERSION = ""
 
 #################################
 ## PATH options
-PATH_HCP = os.path.dirname(os.path.abspath(__file__))  # Path to HyperCP repository on host
+# PATH_HCP = os.path.dirname(os.path.abspath(__file__))  # Path to HyperCP repository on host
+PATH_HCP = "/Users/simonbelanger/PythonProjects/HyperCP/"
 # PATH_DATA = f"{PATH_OS}/Projects/HyperPACE/field_data/HyperSAS/{CRUISE}"  # Top level data directory containing RAW/ and ancillary file.
 PATH_DATA = os.path.join(PATH_HCP,'Data','Sample_Data',PLATFORM)
 ##################################
@@ -78,7 +84,8 @@ else:
     PATH_INPUT = os.path.join(PATH_DATA, L1B_REGIME)
 
 # PATH_OUTPUT does not require folder names of data levels. HyperCP will automate that.
-PATH_OUTPUT = os.path.join(PATH_DATA, L1B_REGIME)
+# PATH_OUTPUT = os.path.join(PATH_DATA, L1B_REGIME)
+PATH_OUTPUT = os.path.join(PATH_DATA, L2_VERSION)
 # Add output directory if necessary (ignore data level directories)
 if os.path.isdir(PATH_OUTPUT) is False:
     os.mkdir(PATH_OUTPUT)
@@ -99,6 +106,9 @@ os.environ["HYPERINSPACE_CMD"] = "true"
 ## Setup remaining globals ##
 TO_LEVELS = ["L1A", "L1AQC", "L1B", "L1BQC", "L2"]
 FROM_LEVELS = ["RAW", "L1A", "L1AQC", "L1B", "L1BQC"]
+# TO_LEVELS = ["L1A", "L1AQC", "L1B", "L1BQC"] # Try to limit the multilevel processing to RAW -> L1BQC
+# FROM_LEVELS = ["RAW", "L1A", "L1AQC", "L1B"]
+
 if INST_TYPE.lower() == "seabird":
     FILE_EXT = [".raw"]  # May need to use ".RAW" sometimes
 else:
@@ -260,7 +270,7 @@ if __name__ == "__main__":
             worker(fpf_input)
 
         t1Single = time.time()
-        print(f"Overall time elapsed: {str(round((t1Single-t0Single)/60))} minutes")
+        print(f"Overall time elapsed: {str(round((t1Single-t0Single)))} seconds")
 
     else:
         print("No input files found")
