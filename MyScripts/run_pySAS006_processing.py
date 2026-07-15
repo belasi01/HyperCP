@@ -434,6 +434,15 @@ if __name__ == "__main__":
             with open(hdr_run_path, 'w', encoding='utf-8') as f:
                 json.dump(hdr, f, indent=4, ensure_ascii=False)
 
+            # HyperCP resolves the calibration directory by convention:
+            # <cfg_basename>_Calibration, sibling to the .cfg file (ConfigFile.getCalibrationDirectory).
+            # Point the version-specific cfg at the same calibration files as PATH_CFG (they don't
+            # change between L2 versions -- only the rho/NIR toggles above do).
+            orig_cal_dir = os.path.splitext(PATH_CFG)[0] + "_Calibration"
+            run_cal_dir = os.path.splitext(cfg_run_path)[0] + "_Calibration"
+            if not os.path.exists(run_cal_dir):
+                os.symlink(orig_cal_dir, run_cal_dir)
+
         # ===========================================================================
         # 4. MULTIPROCESSING POOL / NASA CORE RUN METHOD INVOCATION
         # ===========================================================================
