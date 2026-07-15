@@ -1,6 +1,7 @@
 import os
 import re
 import glob
+import time
 from datetime import datetime
 
 
@@ -9,6 +10,8 @@ def add_sathdr_2_raw(inpath, outpath, fn):
     outfn = os.path.join(outpath, fn)
 
     os.makedirs(outpath, exist_ok=True)
+    time.sleep(0.2)
+
 
     # 1. Clés du header (ordre strict de 25 éléments)
     sathdr_keys = [
