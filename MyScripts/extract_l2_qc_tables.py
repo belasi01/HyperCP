@@ -441,25 +441,22 @@ if __name__ == "__main__":
     ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
     os.makedirs(ANALYSIS_DIR, exist_ok=True)
 
-    # Récupération et parsing propre de votre liste de matrices L2
-    METHODS = [m.strip() for m in env["ALL_L2_VERSIONS"].split(",")]
+    # Sky models to compare (matches SKY_MODEL passed by download_and_run_hypercp.sh):
+    # optional 2nd CLI arg, comma-separated (e.g. "M99,Z17"); defaults to all 3.
+    if len(sys.argv) > 2:
+        SKY_MODELS = [m.strip() for m in sys.argv[2].split(",")]
+    else:
+        SKY_MODELS = ["M99", "Z17", "3C"]
+    METHODS = [f"{model}{correction}" for model in SKY_MODELS for correction in ("NN", "NIR", "SimSpec")]
 
     print(f"📊 [Diagnostics] Analyzing metrics for date: {DATE_STR}")
     print(f"📂 Source directory: {BASE_PATH}")
     print(f"🎯 Methods matrix to evaluate: {METHODS}")
 
-    #ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
-    #os.makedirs(ANALYSIS_DIR, exist_ok=True)
-
-
-    #METHODS = ["M99NN", "M99SimSpec", "M99NIR", "3CNN", "3CSimSpec", "3CNIR", "Z17NN", "Z17SimSpec", "Z17NIR"]
-    #METHODS = ["M99NN",  "M99NIR", "3CNN",  "3CNIR", "Z17NN", "Z17NIR"]
-
     nb_methods = len(METHODS)
 
-
-    # Trouver tous les fichiers HDF5 L2 de référence via M99NN
-    ref_dir = os.path.join(BASE_PATH, "M99NN", "L2")
+    # Trouver tous les fichiers HDF5 L2 de référence via le premier modèle demandé
+    ref_dir = os.path.join(BASE_PATH, f"{SKY_MODELS[0]}NN", "L2")
     files = sorted([f for f in os.listdir(ref_dir) if f.endswith('.hdf') and DATE_STR in f])
 
     all_data = []

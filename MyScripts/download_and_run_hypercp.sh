@@ -126,10 +126,23 @@ else
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1AQC"
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1B"
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1BQC"
-    python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "NN_ALL"
-    python apply_nir_corrections.py --date "${DATE_TARGET}" --model ALL
 
-    python extract_l2_qc_tables.py "${DATE_TARGET}"
+    # SKY_MODEL: "ALL" (M99+Z17+3C), or a comma-separated subset (e.g. "M99,Z17"), or a single model.
+    # Each requested model runs its NN version through the full L2 pipeline, then
+    # apply_nir_corrections.py derives its NIR/SimSpec variants (fast, no full rerun).
+    if [ "${SKY_MODEL}" = "ALL" ]; then
+      MODELS_LIST="M99 Z17 3C"
+    else
+      MODELS_LIST=$(echo "${SKY_MODEL}" | tr ',' ' ')
+    fi
+    MODELS_CSV=$(echo "${MODELS_LIST}" | tr ' ' ',')
+
+    for model in ${MODELS_LIST}; do
+      python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "${model}NN"
+      python apply_nir_corrections.py --date "${DATE_TARGET}" --model "${model}"
+    done
+
+    python extract_l2_qc_tables.py "${DATE_TARGET}" "${MODELS_CSV}"
   else
     # On définit le nom du fichier log daté (ex: pySAS_processing_20260707.log)
     LOG_FILE="${LOG_DIR}/pySAS_processing_${DATE_TARGET}.log"
@@ -146,10 +159,20 @@ else
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1AQC"
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1B"
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1BQC"
-    python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "NN_ALL"
-    python apply_nir_corrections.py --date "${DATE_TARGET}" --model ALL
 
-    python extract_l2_qc_tables.py "${DATE_TARGET}"
+    if [ "${SKY_MODEL}" = "ALL" ]; then
+      MODELS_LIST="M99 Z17 3C"
+    else
+      MODELS_LIST=$(echo "${SKY_MODEL}" | tr ',' ' ')
+    fi
+    MODELS_CSV=$(echo "${MODELS_LIST}" | tr ' ' ',')
+
+    for model in ${MODELS_LIST}; do
+      python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "${model}NN"
+      python apply_nir_corrections.py --date "${DATE_TARGET}" --model "${model}"
+    done
+
+    python extract_l2_qc_tables.py "${DATE_TARGET}" "${MODELS_CSV}"
 
     echo "=========================================================================="
     echo "🏁 PROCESSING COMPLETED FOR DATE: ${DATE_TARGET}"
