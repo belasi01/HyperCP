@@ -126,7 +126,8 @@ else
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1AQC"
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1B"
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1BQC"
-    python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "ALL"
+    python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "NN_ALL"
+    python apply_nir_corrections.py --date "${DATE_TARGET}" --model ALL
 
     python extract_l2_qc_tables.py "${DATE_TARGET}"
   else
@@ -145,7 +146,8 @@ else
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1AQC"
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1B"
     python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L1BQC"
-    python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "ALL"
+    python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "NN_ALL"
+    python apply_nir_corrections.py --date "${DATE_TARGET}" --model ALL
 
     python extract_l2_qc_tables.py "${DATE_TARGET}"
 

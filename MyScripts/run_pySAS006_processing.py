@@ -73,8 +73,11 @@ parser.add_argument("--version", type=str, default="M99SimSpec",
                     choices=["M99SimSpec", "M99NIR", "M99NN",
                              "Z17SimSpec", "Z17NIR", "Z17NN",
                              "3CSimSpec", "3CNIR", "3CNN",
-                             "ALL"], # à modifier en temps et lieu
-                    help="Version de traitement L2 spécifique (9 options)")
+                             "ALL", "NN_ALL"], # à modifier en temps et lieu
+                    help="Version de traitement L2 specifique (9 options), 'ALL' (les 9), ou "
+                         "'NN_ALL' (seulement M99NN/Z17NN/3CNN -- pour combiner avec "
+                         "apply_nir_corrections.py qui derive les 6 versions NIR/SimSpec "
+                         "en post-traitement, sans refaire tourner tout le pipeline L2)")
 
 args = parser.parse_args()
 
@@ -399,6 +402,13 @@ if __name__ == "__main__":
         liste_versions = ALL_L2_VERSIONS
         nb_versions = len(liste_versions)
         print(f"🚀 [SUPER-BATCH L2] Sequential execution of the {nb_versions} processing configurations...")
+    elif PROC_LEVEL == "L2" and L2_VERSION == "NN_ALL":
+        # Only the 3 base (no-NIR-correction) rho-sky models; run
+        # apply_nir_corrections.py afterward to derive the 6 NIR/SimSpec
+        # variants cheaply instead of re-running the full L2 pipeline for them.
+        liste_versions = [v for v in ALL_L2_VERSIONS if v.endswith("NN")]
+        nb_versions = len(liste_versions)
+        print(f"🚀 [SUPER-BATCH L2] Sequential execution of the {nb_versions} NN base configurations...")
     else:
         liste_versions = [L2_VERSION]
 
