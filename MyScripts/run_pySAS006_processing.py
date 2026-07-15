@@ -158,9 +158,10 @@ if not MULTI_LEVEL:
     #
 
 
-def run_Command(fp_input_files, output_path=None):
+def run_Command(fp_input_files, output_path=None, cfg_path=None):
     """Run either directly or using multiprocessor pool below."""
     #   fp_input_files is a string unless TriOS RAW, then list.
+    effective_cfg = cfg_path or PATH_CFG
     if output_path is not None:
         local_path_output = output_path
     else:
@@ -206,7 +207,7 @@ def run_Command(fp_input_files, output_path=None):
             print("************************************************")
 
             Command(
-                PATH_CFG,
+                effective_cfg,
                 from_level,
                 fp_input_files,
                 local_path_output,
@@ -246,7 +247,7 @@ def run_Command(fp_input_files, output_path=None):
 
             try:
                 Command(
-                    PATH_CFG,
+                    effective_cfg,
                     from_level,
                     fp_input_files,
                     local_path_output,
@@ -269,30 +270,26 @@ def worker(fp_input_files):
     import matplotlib.pyplot as plt
     if not hasattr(plt.cm, 'get_cmap'):
         plt.cm.get_cmap = mpl.colormaps.get_cmap
-    # fp_input_files is a list unless multitasking, in which case it's a string, unless it's TriOS RAW
+    # Each item passed is either:
+    #   - a list of file paths (TriOS RAW triplets)
+    #   - a list of (file, version, cfg_path) tuples (non-MULTI_TASK SeaBird)
+    #   - a (file, version, cfg_path) tuple (MULTI_TASK SeaBird)
     if isinstance(fp_input_files, list):
         if INST_TYPE.lower() == "trios" and (MULTI_LEVEL or 'RAW' in FROM_LEVELS):
             print(f"### Processing {fp_input_files} ...")
-            run_Command(fp_input_files,output_path=PATH_OUTPUT)
+            run_Command(fp_input_files, output_path=PATH_OUTPUT)
         else:
-            for file in fp_input_files:
-                #print(f"### Processing {os.path.basename(file)} ...")
-                #run_Command(file,output_path=PATH_OUTPUT)
-                file, current_version = item if isinstance(item, tuple) else (item, L2_VERSION)
+            for item in fp_input_files:
+                file, current_version, cfg_path = item if len(item) == 3 else (*item, None)
                 print(f"### Processing {os.path.basename(file)} ...")
-
-                # On calcule dynamiquement le sous-dossier exact
                 local_out = os.path.join(PATH_DATA, current_version) if PROC_LEVEL == "L2" else PATH_OUTPUT
-                run_Command(file, output_path=local_out)
+                run_Command(file, output_path=local_out, cfg_path=cfg_path)
             print(f"### Finished {os.path.basename(file)}")
     else:
-        #print(f"### Multithread Processing {os.path.basename(fp_input_files)} ...")
-        #run_Command(fp_input_files,output_path=PATH_OUTPUT)
-        file, current_version = fp_input_files if isinstance(fp_input_files, tuple) else (fp_input_files, L2_VERSION)
+        file, current_version, cfg_path = fp_input_files if len(fp_input_files) == 3 else (*fp_input_files, None)
         print(f"### Multithread Processing {os.path.basename(file)} ...")
-
         local_out = os.path.join(PATH_DATA, current_version) if PROC_LEVEL == "L2" else PATH_OUTPUT
-        run_Command(file, output_path=local_out)
+        run_Command(file, output_path=local_out, cfg_path=cfg_path)
         print(f"### Finished {os.path.basename(file)}")
 
 
@@ -405,6 +402,8 @@ if __name__ == "__main__":
     else:
         liste_versions = [L2_VERSION]
 
+    cfg_run_path = PATH_CFG  # default for non-L2 levels
+
     for v in liste_versions:
         if PROC_LEVEL == "L2":
             print(f"\n▶️ RUNNING L2 PROCESSING MATRIX FOR VERSION: {v}")
@@ -427,13 +426,13 @@ if __name__ == "__main__":
             hdr["rho_correction"] = "M99" if "M99" in v else ("Z17" if "Z17" in v else "3C")
             hdr["NIR_residual_correction"] = "None" if "NN" in v else ("NIR" if "NIR" in v else "SimSpec")
 
-            with open(PATH_CFG, 'w', encoding='utf-8') as f:
+            # Write directly to version-specific files — never overwrites the original PATH_CFG
+            cfg_run_path = os.path.join(PATH_OUTPUT, f"config_run_{v}.cfg")
+            hdr_run_path = os.path.join(PATH_OUTPUT, f"header_run_{v}.hdr")
+            with open(cfg_run_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=4)
-            with open(PATH_HDR, 'w', encoding='utf-8') as f:
+            with open(hdr_run_path, 'w', encoding='utf-8') as f:
                 json.dump(hdr, f, indent=4, ensure_ascii=False)
-
-            shutil.copy2(PATH_CFG, os.path.join(PATH_OUTPUT, f"config_run_{v}.cfg"))
-            shutil.copy2(PATH_HDR, os.path.join(PATH_OUTPUT, f"header_run_{v}.hdr"))
 
         # ===========================================================================
         # 4. MULTIPROCESSING POOL / NASA CORE RUN METHOD INVOCATION
@@ -452,9 +451,9 @@ if __name__ == "__main__":
                     unique_fpf_input_triplets = [list(x) for x in set(tuple(x) for x in fpf_input_triplets)]
                     pool.map(worker, unique_fpf_input_triplets)
                 else:
-                    pool.map(worker, [(file, v) for file in fpf_input])
+                    pool.map(worker, [(file, v, cfg_run_path) for file in fpf_input])
         else:
-            worker([(file, v) for file in fpf_input])
+            worker([(file, v, cfg_run_path) for file in fpf_input])
 
         if PROC_LEVEL == "L2":
             print(f"✅ Configuration version {v} completed successfully.")
