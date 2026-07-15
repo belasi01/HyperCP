@@ -97,3 +97,6 @@ Config/*
 run_*.py
 !run_Sample_Data.py
 
+# Pipeline config with credentials — copy pipeline_config.env.template and fill in
+MyScripts/pipeline_config.env
+

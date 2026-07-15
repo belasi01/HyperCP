@@ -112,7 +112,7 @@ L1B_REGIME = ""
 # Batch options
 MULTI_TASK = True  # Multiple threads for HyperSAS (any level) or TriOS (only L1A and up)
 MULTI_LEVEL = False  # Process raw (L0) to Level-2 (L2)
-CLOBBER = False      # True overwrites existing files
+CLOBBER = True      # True overwrites existing files
 
 # Définition automatique des dossiers d'entrée et de sortie selon le niveau demandé
 PATH_INPUT = PATH_DATA
@@ -294,63 +294,6 @@ def worker(fp_input_files):
         local_out = os.path.join(PATH_DATA, current_version) if PROC_LEVEL == "L2" else PATH_OUTPUT
         run_Command(file, output_path=local_out)
         print(f"### Finished {os.path.basename(file)}")
-
-
-# ==============================================================================
-# NOUVELLE APPROCHE POUR ÉVITER DE ROULER 3 x les méthodes rho shy
-# ==============================================================================
-from Source.ConfigFile import ConfigFile
-from Source.ProcessL2 import ProcessL2
-
-
-def execute_turbo_L2(root, station, outFilePath_base, model_prefix):
-    """
-    Exécute le traitement L2 de base (NN), puis applique immédiatement
-    les fonctions NIR et SimSpec de la NASA en mémoire avant l'écriture finale.
-    """
-    # 1. Configuration initiale forcée à No Correction (NN)
-    ConfigFile.settings["bL2SimpleNIRCorrection"] = 0
-    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 0
-
-    # Appel de la fonction originale de la NASA pour générer la base NN
-    # (Calcule les moyennes d'ensembles, les géométries solaires et le rho_sky)
-    node_nn = ProcessL2.processL2(root, station)
-
-    # Sauvegarde normale du fichier de base M99NN, Z17NN ou 3CNN
-    # (Ici, le code original d'HyperCP écrit node_nn dans outFilePath_base)
-
-    # ----------------------------------------------------------------------
-    # EXTENSION TURBO UQAR : CLONAGE ET CORRECTIONS EN MÉMOIRE
-    # ----------------------------------------------------------------------
-    # On récupère les structures spécifiques requises par la fonction native
-    sensor = "HYPER"
-    F0 = root.getGroup("CALIBRATION").getDataset("F0")  # Exemple de récupération de F0
-
-    # --- BRANCHEMENT MÉTHODE NIR ---
-    import copy
-    node_nir = copy.deepcopy(node_nn)  # Duplication complète de l'objet en mémoire
-    ConfigFile.settings["bL2SimpleNIRCorrection"] = 1
-    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 0
-
-    # Appel direct de la fonction native de la NASA que vous avez trouvée !
-    ProcessL2.nirCorrection(node_nir, sensor, F0)
-
-    # Modification du chemin de sortie pour le dossier correspondant (ex: M99NIR)
-    outFilePath_nir = outFilePath_base.replace(f"{model_prefix}NN", f"{model_prefix}NIR")
-    # Enregistrement du node_nir via la méthode de sauvegarde d'HyperCP
-
-    # --- BRANCHEMENT MÉTHODE SIMSPEC ---
-    node_sim = copy.deepcopy(node_nn)
-    ConfigFile.settings["bL2SimpleNIRCorrection"] = 0
-    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 1
-
-    # Deuxième appel direct de la fonction native
-    ProcessL2.nirCorrection(node_sim, sensor, F0)
-
-    outFilePath_sim = outFilePath_base.replace(f"{model_prefix}NN", f"{model_prefix}SimSpec")
-    # Enregistrement du node_sim via la méthode de sauvegarde d'HyperCP
-
-    print(f"⚡ [Turbo L2] Applied native NIR & SimSpec corrections in-memory for {model_prefix}")
 
 
 if __name__ == "__main__":
