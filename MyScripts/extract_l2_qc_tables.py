@@ -13,6 +13,7 @@ import matplotlib as mpl  # S'assurer que matplotlib est importé en haut
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from scipy.interpolate import interp1d
+from generate_ancillary_file import read_tsg
 
 
 def extract_cast_metadata_and_qc(file_path):
@@ -430,7 +431,90 @@ def plot_wind_cloud_diagnostics(base_path, date_str, top_methods, df_ranked, max
     return out_png
 
 
-def generate_pdf_report(base_path, date_str, global_ranking, fig_path, wind_cloud_fig_path=None):
+def extract_tsg_for_casts(df_casts, date_str, tsg_dir):
+    """
+    Associe a chaque cast (Datetag/Timetag2) l'enregistrement TSG le plus proche
+    dans le temps : temperature (t2), salinite (s), fluorescence (fluo).
+    Utilise `dating` (Source.utils.dating), importe et rendu global dans le
+    bloc __main__ une fois PATH_HCP connu.
+    """
+    df_out = df_casts.copy()
+    df_out["TSG_T2"] = np.nan
+    df_out["TSG_S"] = np.nan
+    df_out["TSG_Fluo"] = np.nan
+
+    tsg_path = os.path.join(tsg_dir, f"tsg_convdata_{date_str}.cnv")
+    if not os.path.exists(tsg_path):
+        print(f"⚠️ Fichier TSG introuvable pour le diagnostic océanographique : {tsg_path}")
+        return df_out
+
+    df_tsg = read_tsg(tsg_path)[["datetime", "t2", "s", "fluo"]].dropna(subset=["datetime"])
+    # read_tsg() can leave t2/s/fluo as dtype=object (e.g. a single malformed/oddly-spaced
+    # "NaN" token elsewhere in the file is enough to prevent pandas from inferring float64
+    # for the whole column) -- coerce explicitly so plotting doesn't treat them as categorical.
+    for col in ("t2", "s", "fluo"):
+        df_tsg[col] = pd.to_numeric(df_tsg[col], errors="coerce")
+    df_tsg = df_tsg.sort_values("datetime")
+
+    cast_datetimes = [
+        pd.Timestamp(dating.timeTag2ToDateTime(dating.dateTagToDateTime(int(row["Datetag"])), int(row["Timetag2"])))
+        for _, row in df_out.iterrows()
+    ]
+    df_out = df_out.assign(_cast_datetime=cast_datetimes).sort_values("_cast_datetime")
+
+    merged = pd.merge_asof(df_out, df_tsg, left_on="_cast_datetime", right_on="datetime",
+                            direction="nearest", tolerance=pd.Timedelta("15min"))
+    df_out["TSG_T2"] = merged["t2"].values
+    df_out["TSG_S"] = merged["s"].values
+    df_out["TSG_Fluo"] = merged["fluo"].values
+    return df_out.drop(columns=["_cast_datetime"]).sort_values("Timetag2").reset_index(drop=True)
+
+
+def plot_tsg_diagnostics(base_path, date_str, top_methods, df_ranked, tsg_dir):
+    """
+    Contexte océanographique TSG pour la journée (à partir du modèle de référence
+    top_methods[0]) : température (t2) et salinité (S) vs temps, et fluorescence
+    (fluo) vs temps.
+    """
+    df_casts = df_ranked[df_ranked["Method"] == top_methods[0]].sort_values("Timetag2").reset_index(drop=True)
+    df_casts = extract_tsg_for_casts(df_casts, date_str, tsg_dir)
+
+    hours = df_casts["Timetag2"].apply(lambda t: (t // 10000000) + ((t % 10000000) // 100000) / 60.0)
+
+    fig, (ax_ts, ax_fluo) = plt.subplots(2, 1, figsize=(12, 9))
+
+    l1, = ax_ts.plot(hours, df_casts["TSG_T2"], color="firebrick", marker='o', linewidth=1.2, label="Temperature (t2)")
+    ax_ts.set_ylabel("Temperature (°C)", color="firebrick", fontweight='bold')
+    ax_ts.tick_params(axis='y', labelcolor="firebrick")
+    ax_ts.grid(True, linestyle='--', alpha=0.3)
+    ax_ts.set_title("TSG Temperature (t2) & Salinity (S)", fontsize=14, fontweight='bold')
+    ax_ts.set_xlabel("Hour of day (UTC)", fontweight='bold')
+
+    ax_sal = ax_ts.twinx()
+    l2, = ax_sal.plot(hours, df_casts["TSG_S"], color="steelblue", marker='s', linewidth=1.2, label="Salinity (S)")
+    ax_sal.set_ylabel("Salinity (psu)", color="steelblue", fontweight='bold')
+    ax_sal.tick_params(axis='y', labelcolor="steelblue")
+    ax_ts.legend(handles=[l1, l2], loc="upper right")
+
+    ax_fluo.plot(hours, df_casts["TSG_Fluo"], color="seagreen", marker='o', linewidth=1.2)
+    ax_fluo.set_xlabel("Hour of day (UTC)", fontweight='bold')
+    ax_fluo.set_ylabel("Fluorescence (fluo)", fontweight='bold')
+    ax_fluo.set_title("TSG Fluorescence", fontsize=14, fontweight='bold')
+    ax_fluo.grid(True, linestyle='--', alpha=0.3)
+
+    fig.suptitle(f"TSG Oceanographic Context -- pySAS ({date_str})", fontsize=16, fontweight='bold')
+    fig.subplots_adjust(top=0.92, hspace=0.35)
+
+    analysis_dir = os.path.join(base_path, "AnalysisComparison")
+    os.makedirs(analysis_dir, exist_ok=True)
+    out_png = os.path.join(analysis_dir, f"L2_TSG_Diagnostics_{date_str}.png")
+    plt.savefig(out_png, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"🌊 TSG diagnostic figure exported: {out_png}")
+    return out_png
+
+
+def generate_pdf_report(base_path, date_str, global_ranking, fig_path, wind_cloud_fig_path=None, tsg_fig_path=None):
     """
     Génère un rapport de diagnostic PDF propre et compatible avec fpdf2 v2.5+.
     Élimine les émojis non-Unicode et les paramètres dépréciés (ln=True).
@@ -502,6 +586,15 @@ def generate_pdf_report(base_path, date_str, global_ranking, fig_path, wind_clou
         pdf.ln(2)
         pdf.image(wind_cloud_fig_path, x=10, w=190)
 
+    # Section 4 : Contexte océanographique TSG (temperature/salinite/fluorescence)
+    if tsg_fig_path and os.path.exists(tsg_fig_path):
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(0, 10, "4. TSG OCEANOGRAPHIC CONTEXT",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        pdf.image(tsg_fig_path, x=10, w=190)
+
     out_pdf = os.path.join(base_path, f"L2_Processing_Report_{date_str}.pdf")
     pdf.output(out_pdf)
     print(f"📄 Final PDF Report successfully generated: {out_pdf}")
@@ -559,6 +652,14 @@ if __name__ == "__main__":
     # Assignation des chemins et des versions
     MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
     BASE_PATH = os.path.join(MAIN_DATA_PATH, "pySAS")
+    TSG_DIR = os.path.join(MAIN_DATA_PATH, "TSG")
+
+    # dating (Source.utils.dating) est nécessaire pour convertir Datetag/Timetag2
+    # en datetime afin de les recaler sur les enregistrements TSG (extract_tsg_for_casts)
+    PATH_HCP = env["PATH_HCP"]
+    if PATH_HCP not in sys.path:
+        sys.path.insert(0, PATH_HCP)
+    import Source.utils.dating as dating
 
     # Seuils vent/nuage : lus directement du .cfg HyperCP actif (pas dupliqués dans le .env)
     hcp_cfg_path = os.path.join(env["PATH_HCP"], "Config", env["CFG_FILE_NAME"])
@@ -696,9 +797,12 @@ if __name__ == "__main__":
     chemin_figure_vent_nuage = plot_wind_cloud_diagnostics(
         BASE_PATH, DATE_STR, top_methods_ordered, df_ranked, MAX_WIND, CLOUD_FLAG_THRESH)
 
+    print(f"\n🌊 Génération du diagnostic TSG (température/salinité/fluorescence)...")
+    chemin_figure_tsg = plot_tsg_diagnostics(BASE_PATH, DATE_STR, top_methods_ordered, df_ranked, TSG_DIR)
+
     print(f"📝 Compilation du rapport d'analyse PDF final...")
     ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
-    generate_pdf_report(ANALYSIS_DIR, DATE_STR, global_ranking, chemin_figure, chemin_figure_vent_nuage)
+    generate_pdf_report(ANALYSIS_DIR, DATE_STR, global_ranking, chemin_figure, chemin_figure_vent_nuage, chemin_figure_tsg)
 
 # ---------------------------------------------------------------------------
 # EXPORT 4 : Génération automatique du fichier SIG GeoJSON (Votre code actuel)
