@@ -113,11 +113,14 @@ def compute_f0_from_nn_file(h5_path):
 def apply_simple_nir(h5_path, f0=None):
     """
     Simple NIR correction — Mueller & Austin (1995).
-    Matches Source/ProcessL2.py::nirCorrection: Rrs and nLw each get their OWN
-    independent, spectrally-flat offset (the minimum in 700-800 nm of that same
-    dataset), subtracted uniformly across all wavelengths. The nLw offset is
-    NOT derived from the Rrs offset scaled by F0[λ] -- that would not match
-    what a full L2 run produces.
+    Deviates from Source/ProcessL2.py::nirCorrection by design: HyperCP reverts
+    to a 0 offset whenever the NIR minimum is negative ("never ADD reflectance").
+    In practice, a negative NIR baseline is common under overcast/white-sky
+    conditions and is a legitimate "white" residual to remove, not a reason to
+    skip the correction -- so here the offset is always subtracted, whatever
+    its sign. Rrs and nLw each get their OWN independent, spectrally-flat offset
+    (the minimum in 700-800 nm of that same dataset), subtracted uniformly
+    across all wavelengths.
     """
     with h5py.File(h5_path, 'r+') as f:
         rrs = f['REFLECTANCE/Rrs_HYPER'][...]
@@ -131,8 +134,6 @@ def apply_simple_nir(h5_path, f0=None):
                             if not np.isnan(rrs[wl][i])]
             if rrs_nir_vals:
                 rrs_corr = min(rrs_nir_vals)
-                if rrs_corr < 0:  # never let the offset ADD reflectance
-                    rrs_corr = 0.0
                 for wl in wls:
                     rrs[wl][i] -= rrs_corr
 
@@ -154,7 +155,9 @@ def apply_simspec_nir(h5_path, f0):
     720/780/870 nm (each from its own ~50 nm window, like the real pipeline),
     F0 is interpolated at the same three points to derive an nLw-equivalent
     offset, and a single flat scalar (rrs_corr / nlw_corr) is subtracted from
-    every waveband -- not a per-wavelength F0-scaled offset.
+    every waveband -- not a per-wavelength F0-scaled offset. Unlike the real
+    pipeline, the offset is always subtracted even when negative (see
+    apply_simple_nir docstring for the rationale).
     """
     ALPHA1 = 2.35   # expected ρ(720)/ρ(780) ratio
     ALPHA2 = 1.91   # expected ρ(780)/ρ(870) ratio
@@ -205,9 +208,8 @@ def apply_simspec_nir(h5_path, f0):
 
             rrs_corr = eps / np.pi
             nlw_corr = eps_nlw / np.pi
-            if rrs_corr < 0:  # never let the offset ADD reflectance
-                rrs_corr = 0.0
-                nlw_corr = 0.0
+            # Deviates from Source/ProcessL2.py by design: no revert-to-0 guard for
+            # a negative offset (see apply_simple_nir docstring) -- always subtract.
 
             for wl in wls:
                 rrs[wl][i] -= rrs_corr

@@ -1,4 +1,6 @@
 import os
+import re
+import json
 import h5py
 import numpy as np
 import pandas as pd
@@ -10,6 +12,7 @@ from fpdf import FPDF
 import matplotlib as mpl  # S'assurer que matplotlib est importé en haut
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from scipy.interpolate import interp1d
 
 
 def extract_cast_metadata_and_qc(file_path):
@@ -58,6 +61,35 @@ def extract_cast_metadata_and_qc(file_path):
             else:
                 lon_values = np.zeros(n_records)
 
+            # 4. Vitesse du vent (ANCILLARY/WINDSPEED -- structure a 4 colonnes,
+            # Datetag/Timetag2/WINDFLAG/WINDSPEED, donc sélection par nom, PAS par
+            # position comme LATITUDE/LONGITUDE qui n'en ont que 3).
+            if "/ANCILLARY/WINDSPEED" in h5f:
+                wind_raw = h5f["/ANCILLARY/WINDSPEED"][...]
+                wind_cols = wind_raw.dtype.names
+                wind_values = wind_raw["WINDSPEED"] if wind_cols and "WINDSPEED" in wind_cols else wind_raw
+            else:
+                wind_values = np.full(n_records, np.nan)
+
+            # 5. Ratio Li(750)/Es(750) comme indicateur de nuage (Ruddick 2006, IOCCG
+            # Protocols -- même calcul que Source/ProcessL1bqc.py::metQualityCheck,
+            # mais recalculé ici car MET_FLAGS ne survit pas jusqu'au fichier L2).
+            cloud_ratio_values = np.full(n_records, np.nan)
+            if "/IRRADIANCE/ES_HYPER" in h5f and "/RADIANCE/LI_HYPER" in h5f:
+                es_raw = h5f["/IRRADIANCE/ES_HYPER"][...]
+                li_raw = h5f["/RADIANCE/LI_HYPER"][...]
+                es_wl = sorted([c for c in es_raw.dtype.names if re.match(r'^[\d.]+$', c)], key=float)
+                li_wl = sorted([c for c in li_raw.dtype.names if re.match(r'^[\d.]+$', c)], key=float)
+                if es_wl and li_wl:
+                    es_x = np.array([float(w) for w in es_wl])
+                    li_x = np.array([float(w) for w in li_wl])
+                    es_interp = interp1d(es_x, np.array([es_raw[w] for w in es_wl]), axis=0)
+                    li_interp = interp1d(li_x, np.array([li_raw[w] for w in li_wl]), axis=0)
+                    es750 = es_interp(750.0)
+                    li750 = li_interp(750.0)
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        cloud_ratio_values = np.where(es750 != 0, li750 / es750, np.nan)
+
             records = []
             for i in range(n_records):
                 records.append({
@@ -66,7 +98,9 @@ def extract_cast_metadata_and_qc(file_path):
                     "Latitude": float(lat_values[i]) if i < len(lat_values) else 0.0,
                     "Longitude": float(lon_values[i]) if i < len(lon_values) else 0.0,
                     "QWIP": float(qwip_values[i]) if i < len(qwip_values) else 0.0,
-                    "WEI_QA": float(wei_values[i]) if i < len(wei_values) else 0.0
+                    "WEI_QA": float(wei_values[i]) if i < len(wei_values) else 0.0,
+                    "WindSpeed": float(wind_values[i]) if i < len(wind_values) else float('nan'),
+                    "CloudRatio": float(cloud_ratio_values[i]) if i < len(cloud_ratio_values) else float('nan'),
                 })
             return records
 
@@ -317,7 +351,86 @@ def plot_top4_methods_with_map(base_path, date_str, top_methods, df_ranked, time
     return out_png
 
 
-def generate_pdf_report(base_path, date_str, global_ranking, fig_path):
+def plot_wind_cloud_diagnostics(base_path, date_str, top_methods, df_ranked, max_wind, cloud_flag_thresh):
+    """
+    Diagnostic vent/nuage, indépendant du classement QWIP :
+    - Carte colorée par vitesse de vent (0 -> max_wind m/s, seuil fL1bqcMaxWind)
+    - Carte des ensembles suspectés "nuageux" (Li/Es(750) >= cloud_flag_thresh, seuil
+      fL1bqcCloudFlag, protocole Ruddick 2006/IOCCG), points rouges vs blancs
+    - Sous-graphe temporel du ratio Li/Es(750) avec ligne de seuil
+    """
+    df_casts = df_ranked[df_ranked["Method"] == top_methods[0]].sort_values(by="Timetag2").reset_index(drop=True)
+
+    fig = plt.figure(figsize=(16, 14))
+
+    lon_min, lon_max = df_casts["Longitude"].min() - 0.15, df_casts["Longitude"].max() + 0.15
+    lat_min, lat_max = df_casts["Latitude"].min() - 0.1, df_casts["Latitude"].max() + 0.1
+
+    def _setup_map(ax):
+        ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
+        ax.add_feature(cfeature.OCEAN.with_scale('10m'), facecolor='#e0f3ff')
+        ax.add_feature(cfeature.LAND.with_scale('10m'), facecolor='#f4f3ef', edgecolor='#bdc3c7', linewidth=0.5)
+        ax.add_feature(cfeature.LAKES.with_scale('10m'), facecolor='#e0f3ff')
+        ax.plot(df_casts["Longitude"], df_casts["Latitude"], color="#7f8c8d",
+                linestyle="-", linewidth=1.5, transform=ccrs.PlateCarree(), zorder=4)
+        gl = ax.gridlines(draw_labels=True, linestyle=':', alpha=0.5, color='gray')
+        gl.top_labels = False
+        gl.right_labels = False
+
+    # --- Panel A: carte vitesse du vent ---
+    ax_wind = plt.subplot(2, 2, 1, projection=ccrs.PlateCarree())
+    _setup_map(ax_wind)
+    wind_norm = mcolors.Normalize(vmin=0, vmax=max_wind)
+    sc = ax_wind.scatter(df_casts["Longitude"], df_casts["Latitude"],
+                          c=df_casts["WindSpeed"].clip(upper=max_wind), cmap=mpl.colormaps["viridis"],
+                          norm=wind_norm, edgecolors='black', s=140, zorder=5, transform=ccrs.PlateCarree())
+    cbar = plt.colorbar(sc, ax=ax_wind, orientation='vertical', pad=0.05, shrink=0.8)
+    cbar.set_label(f"Wind speed (m/s, capped at {max_wind:.0f})", fontweight='bold')
+    ax_wind.set_title("Wind Speed Along Track", fontsize=14, fontweight='bold')
+
+    # --- Panel B: carte flag nuage ---
+    ax_cloud = plt.subplot(2, 2, 2, projection=ccrs.PlateCarree())
+    _setup_map(ax_cloud)
+    is_cloudy = df_casts["CloudRatio"] >= cloud_flag_thresh
+    ax_cloud.scatter(df_casts.loc[~is_cloudy, "Longitude"], df_casts.loc[~is_cloudy, "Latitude"],
+                      color="white", edgecolors='black', s=140, zorder=5,
+                      transform=ccrs.PlateCarree(), label="Clear")
+    ax_cloud.scatter(df_casts.loc[is_cloudy, "Longitude"], df_casts.loc[is_cloudy, "Latitude"],
+                      color="red", edgecolors='black', s=140, zorder=5,
+                      transform=ccrs.PlateCarree(), label="Cloud-flagged")
+    ax_cloud.legend(loc="upper right", fontsize=9)
+    ax_cloud.set_title(f"Cloud Flag (Li/Es@750nm >= {cloud_flag_thresh})", fontsize=14, fontweight='bold')
+
+    # --- Panel C: série temporelle du ratio nuage ---
+    ax_time = plt.subplot(2, 1, 2)
+    hours = df_casts["Timetag2"].apply(
+        lambda t: (t // 10000000) + ((t % 10000000) // 100000) / 60.0)
+    colors = np.where(df_casts["CloudRatio"] >= cloud_flag_thresh, "red", "#2c3e50")
+    ax_time.plot(hours, df_casts["CloudRatio"], color="#2c3e50", linewidth=1, zorder=1)
+    ax_time.scatter(hours, df_casts["CloudRatio"], color=colors, edgecolors='black', s=50, zorder=2)
+    ax_time.axhline(cloud_flag_thresh, color='red', linestyle='--', linewidth=1.2,
+                     label=f"Cloud threshold ({cloud_flag_thresh})")
+    ax_time.set_xlabel("Hour of day (UTC)", fontweight='bold')
+    ax_time.set_ylabel("Li(750) / Es(750)", fontweight='bold')
+    ax_time.set_title("Cloud Indicator Time Series", fontsize=14, fontweight='bold')
+    ax_time.legend(loc="upper right")
+    ax_time.grid(True, linestyle='--', alpha=0.3)
+
+    fig.suptitle(f"Wind & Cloud Diagnostics -- pySAS ({date_str})", fontsize=18, fontweight='bold')
+    # NOTE: fig.tight_layout() is known to break cartopy GeoAxes gridliners
+    # (raises a "Singular matrix" LinAlgError) -- rely on bbox_inches='tight' below instead.
+    fig.subplots_adjust(top=0.92, hspace=0.3)
+
+    analysis_dir = os.path.join(base_path, "AnalysisComparison")
+    os.makedirs(analysis_dir, exist_ok=True)
+    out_png = os.path.join(analysis_dir, f"L2_Wind_Cloud_Diagnostics_{date_str}.png")
+    plt.savefig(out_png, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"🌬️  Wind/Cloud diagnostic figure exported: {out_png}")
+    return out_png
+
+
+def generate_pdf_report(base_path, date_str, global_ranking, fig_path, wind_cloud_fig_path=None):
     """
     Génère un rapport de diagnostic PDF propre et compatible avec fpdf2 v2.5+.
     Élimine les émojis non-Unicode et les paramètres dépréciés (ln=True).
@@ -380,6 +493,15 @@ def generate_pdf_report(base_path, date_str, global_ranking, fig_path):
     if os.path.exists(fig_path):
         pdf.image(fig_path, x=10, w=190)
 
+    # Section 3 : Diagnostic vent / nuage
+    if wind_cloud_fig_path and os.path.exists(wind_cloud_fig_path):
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.cell(0, 10, "3. WIND & CLOUD DIAGNOSTICS",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        pdf.image(wind_cloud_fig_path, x=10, w=190)
+
     out_pdf = os.path.join(base_path, f"L2_Processing_Report_{date_str}.pdf")
     pdf.output(out_pdf)
     print(f"📄 Final PDF Report successfully generated: {out_pdf}")
@@ -437,6 +559,13 @@ if __name__ == "__main__":
     # Assignation des chemins et des versions
     MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
     BASE_PATH = os.path.join(MAIN_DATA_PATH, "pySAS")
+
+    # Seuils vent/nuage : lus directement du .cfg HyperCP actif (pas dupliqués dans le .env)
+    hcp_cfg_path = os.path.join(env["PATH_HCP"], "Config", env["CFG_FILE_NAME"])
+    with open(hcp_cfg_path, encoding="utf-8") as f:
+        hcp_cfg = json.load(f)
+    MAX_WIND = float(hcp_cfg.get("fL1bqcMaxWind", 12.0))
+    CLOUD_FLAG_THRESH = float(hcp_cfg.get("fL1bqcCloudFlag", 0.05))
 
     ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
     os.makedirs(ANALYSIS_DIR, exist_ok=True)
@@ -521,6 +650,8 @@ if __name__ == "__main__":
                 "Method": row["Method"],
                 "QWIP": row["QWIP"],
                 "WEI_QA": row["WEI_QA"],
+                "WindSpeed": row["WindSpeed"],
+                "CloudRatio": row["CloudRatio"],
                 "Rank_Quote": rank_idx + 1  # Donne une note de 1 à 6
             })
 
@@ -561,9 +692,13 @@ if __name__ == "__main__":
 
     chemin_figure = plot_top4_methods_with_map(BASE_PATH, DATE_STR, top_methods_ordered, df_ranked, time_color_map)
 
+    print(f"\n🌬️  Génération du diagnostic vent/nuage...")
+    chemin_figure_vent_nuage = plot_wind_cloud_diagnostics(
+        BASE_PATH, DATE_STR, top_methods_ordered, df_ranked, MAX_WIND, CLOUD_FLAG_THRESH)
+
     print(f"📝 Compilation du rapport d'analyse PDF final...")
     ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
-    generate_pdf_report(ANALYSIS_DIR, DATE_STR, global_ranking, chemin_figure)
+    generate_pdf_report(ANALYSIS_DIR, DATE_STR, global_ranking, chemin_figure, chemin_figure_vent_nuage)
 
 # ---------------------------------------------------------------------------
 # EXPORT 4 : Génération automatique du fichier SIG GeoJSON (Votre code actuel)
