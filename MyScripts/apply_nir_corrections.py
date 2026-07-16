@@ -168,7 +168,12 @@ def apply_simspec_nir(h5_path, f0):
     f0_y = np.array([f0[w] for w in f0_wls])
 
     def f0_at(target):
-        return float(interp1d(f0_x, f0_y)(target))
+        # F0 is reconstructed per-file from nLw/Rrs (see compute_f0_from_nn_file) and
+        # doesn't always cover up to 720/780/870 nm (e.g. if those bands were all
+        # near-zero/negative Rrs for every ensemble in this file). F0 varies slowly
+        # and smoothly with wavelength, so extrapolating a short distance beyond the
+        # reconstructed range is preferable to a hard crash that aborts the whole run.
+        return float(interp1d(f0_x, f0_y, fill_value="extrapolate", bounds_error=False)(target))
 
     with h5py.File(h5_path, 'r+') as f:
         rrs = f['REFLECTANCE/Rrs_HYPER'][...]
@@ -424,7 +429,12 @@ def main():
             print(f"\n  [{version}] Processing {len(nn_files)} file(s)...")
             for nn_path in nn_files:
                 print(f"  → {os.path.basename(nn_path)}")
-                process_one_file(nn_path, out_dir, correction, cfg_path, args.clobber)
+                try:
+                    process_one_file(nn_path, out_dir, correction, cfg_path, args.clobber)
+                except Exception as e:
+                    # One bad ensemble/file must not abort every remaining file, model,
+                    # and correction in the batch -- log it and keep going.
+                    print(f"    ❌ Failed on {os.path.basename(nn_path)}: {e}")
 
             print(f"  ✅ {version} complete.")
 
