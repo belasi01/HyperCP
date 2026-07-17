@@ -10,11 +10,14 @@ Usage :
 Fonctionnement :
 - Lit pipeline_config.env (même fichier que extract_l2_qc_tables.py) pour trouver
   MAIN_DATA_PATH.
-- Le sélecteur de date liste les journées déjà traitées (fichiers
-  AnalysisComparison/L2_Methods_Quotes_<date>.csv produits par extract_l2_qc_tables.py).
-- La carte affiche la trajectoire du bateau pour la journée choisie (un point par cast),
-  avec traits de côte (données géo intégrées à Plotly, aucun réseau requis).
-- Cliquer sur un point charge les 9 spectres Rrs (M99/Z17/3C x NN/NIR/SimSpec) de ce cast.
+- Le sélecteur de date (multi-sélection) liste les journées déjà traitées (fichiers
+  AnalysisComparison/L2_Methods_Quotes_<date>.csv produits par extract_l2_qc_tables.py) ;
+  plusieurs dates peuvent être combinées dans une même vue (carte, spectres, SPLOM), les
+  journées déjà en cache sont simplement concaténées.
+- La carte affiche la trajectoire du bateau pour la sélection courante (un point par
+  cast ; pas de ligne de trajet entre les jours si plusieurs dates sont choisies), avec
+  traits de côte (données géo intégrées à Plotly, aucun réseau requis).
+- Cliquer sur un point charge les 7 spectres Rrs (M99/Z17 x NN/NIR/SimSpec + 3CNN) de ce cast.
 - Sélectionner un groupe de points (lasso/rectangle) + choisir une longueur d'onde au
   slider affiche une matrice de corrélation (scatterplot matrix) entre les 9 méthodes
   pour ce sous-ensemble, avec un tableau de stats d'intercomparaison (biais, RMSD, R²)
@@ -214,11 +217,12 @@ def load_qc_matrices(date_str, df_casts):
 
 
 def get_day_data(date_str):
-    """Charge (une fois par date) tous les spectres des 9 méthodes en mémoire."""
+    """Charge (une fois par date) tous les spectres des 7 méthodes en mémoire."""
     if date_str in _DAY_CACHE:
         return _DAY_CACHE[date_str]
 
     df_casts = load_casts(date_str)
+    df_casts["Date"] = date_str
     df_casts["Hour"] = df_casts["Timetag2"].apply(timetag2_to_hour)
     df_casts = merge_tsg_for_casts(df_casts, date_str)
     df_casts["SZA"] = load_sza_for_casts(df_casts)
@@ -242,18 +246,80 @@ def get_day_data(date_str):
     return data
 
 
-def build_map_figure(df_casts, color_values, color_label, cmin=None, cmax=None):
+# Cache des vues combinées multi-dates : {(date1, date2, ...) triés: {mêmes clés que get_day_data}}
+_COMBINED_CACHE = {}
+
+
+def _resample_cube_to_grid(cube, wavelengths, ref_wavelengths):
+    """Linearly resample a (n_casts, n_wl, n_methods) cube onto ref_wavelengths.
+    The L1B waveband grid can differ slightly from one day to another (e.g. one extra
+    band), so combining dates can't assume they share a wavelength axis."""
+    if np.array_equal(wavelengths, ref_wavelengths):
+        return cube
+    n_casts, _, n_methods = cube.shape
+    resampled = np.full((n_casts, len(ref_wavelengths), n_methods), np.nan)
+    for i in range(n_casts):
+        for j in range(n_methods):
+            spectrum = cube[i, :, j]
+            if np.all(np.isnan(spectrum)):
+                continue
+            resampled[i, :, j] = np.interp(ref_wavelengths, wavelengths, spectrum)
+    return resampled
+
+
+def get_combined_day_data(date_strs):
+    """Concatène plusieurs journées déjà en cache (get_day_data) en une seule structure
+    de même forme, pour que toute l'UI (carte, spectres, SPLOM, stats) fonctionne sans
+    changement, qu'une ou plusieurs dates soient sélectionnées. Les jours dont la grille
+    de longueurs d'onde diffère de la première date sélectionnée sont ré-échantillonnés
+    sur cette grille de référence (cf. _resample_cube_to_grid)."""
+    key = tuple(sorted(date_strs))
+    if key in _COMBINED_CACHE:
+        return _COMBINED_CACHE[key]
+
+    days = [get_day_data(d) for d in key]
+    ref_wavelengths = days[0]["wavelengths"]
+    df_casts = pd.concat([d["df_casts"] for d in days], ignore_index=True)
+    data = {
+        "df_casts": df_casts,
+        "wavelengths": ref_wavelengths,
+        "cube": np.concatenate(
+            [_resample_cube_to_grid(d["cube"], d["wavelengths"], ref_wavelengths) for d in days], axis=0
+        ),
+        "qwip": np.concatenate([d["qwip"] for d in days], axis=0),
+        "wei": np.concatenate([d["wei"] for d in days], axis=0),
+    }
+    _COMBINED_CACHE[key] = data
+    return data
+
+
+def build_map_figure(df_casts, color_values, color_label, cmin=None, cmax=None,
+                      hover_values=None, colorbar_tickvals=None, colorbar_ticktext=None):
     color_values = pd.Series(np.asarray(color_values, dtype=float), index=df_casts.index)
+    if hover_values is None:
+        hover_values = color_values
+    else:
+        hover_values = pd.Series(np.asarray(hover_values), index=df_casts.index)
+
+    def _fmt(val):
+        if pd.isna(val):
+            return "n/d"
+        return f"{val:.3g}" if isinstance(val, (int, float, np.floating)) else str(val)
+
     hover_text = [
-        f"{row.Filename}<br>{timetag2_to_hhmmss(row.Timetag2)} UTC<br>{color_label}: {val:.3g}"
-        if pd.notna(val) else f"{row.Filename}<br>{timetag2_to_hhmmss(row.Timetag2)} UTC<br>{color_label}: n/d"
-        for row, val in zip(df_casts.itertuples(), color_values)
+        f"{row.Filename}<br>{timetag2_to_hhmmss(row.Timetag2)} UTC<br>{color_label}: {_fmt(val)}"
+        for row, val in zip(df_casts.itertuples(), hover_values)
     ]
     customdata = list(zip(df_casts["Filename"], df_casts["Timetag2"]))
 
+    colorbar = dict(title=color_label)
+    if colorbar_tickvals is not None:
+        colorbar["tickvals"] = colorbar_tickvals
+        colorbar["ticktext"] = colorbar_ticktext
+
     marker = dict(
         size=10, color=color_values, colorscale="Viridis",
-        colorbar=dict(title=color_label),
+        colorbar=colorbar,
         line=dict(color="black", width=0.5),
     )
     if cmin is not None:
@@ -261,10 +327,15 @@ def build_map_figure(df_casts, color_values, color_label, cmin=None, cmax=None):
     if cmax is not None:
         marker["cmax"] = cmax
 
+    # Connecting the track with a line only makes sense within a single day -- across
+    # multiple dates it would draw a spurious line from the last cast of one day to the
+    # first of the next.
+    multi_date = df_casts["Date"].nunique() > 1 if "Date" in df_casts else False
+
     fig = go.Figure(go.Scattergeo(
         lon=df_casts["Longitude"],
         lat=df_casts["Latitude"],
-        mode="lines+markers",
+        mode="markers" if multi_date else "lines+markers",
         line=dict(color="#888", width=1),
         marker=marker,
         text=hover_text,
@@ -416,13 +487,19 @@ def selected_indices(selected_data, n_casts):
     return sorted({p["pointIndex"] for p in selected_data["points"]})
 
 
-def build_selected_spectra_figure(day, idx, method, color_values, color_label="Heure (UTC)"):
+def build_selected_spectra_figure(day, idx, method, color_values, color_label="Heure (UTC)",
+                                   hover_values=None, colorbar_tickvals=None, colorbar_ticktext=None):
     wavelengths = day["wavelengths"]
     df_casts = day["df_casts"]
     cube = day["cube"]
     method_idx = METHODS.index(method)
+    multi_date = "Date" in df_casts and df_casts["Date"].nunique() > 1
 
     values = pd.Series(np.asarray(color_values, dtype=float), index=df_casts.index)
+    if hover_values is None:
+        hover_values = values
+    else:
+        hover_values = pd.Series(np.asarray(hover_values), index=df_casts.index)
     finite = values[np.isfinite(values)]
     vmin, vmax = (finite.min(), finite.max()) if len(finite) else (0.0, 1.0)
     span = (vmax - vmin) or 1.0
@@ -438,20 +515,28 @@ def build_selected_spectra_figure(day, idx, method, color_values, color_label="H
             color = plotly.colors.sample_colorscale("Viridis", [(val - vmin) / span])[0]
         else:
             color = "#999999"
-        val_txt = f"{val:.3g}" if pd.notna(val) else "n/d"
+        hover_val = hover_values.iloc[i]
+        val_txt = "n/d" if pd.isna(hover_val) else (
+            f"{hover_val:.3g}" if isinstance(hover_val, (int, float, np.floating)) else str(hover_val)
+        )
+        label = f"{row['Date']} {timetag2_to_hhmmss(row['Timetag2'])}" if multi_date else timetag2_to_hhmmss(row["Timetag2"])
         fig.add_trace(go.Scatter(
             x=wavelengths, y=spectrum, mode="lines",
             line=dict(color=color), opacity=0.8,
-            name=timetag2_to_hhmmss(row["Timetag2"]),
+            name=label,
             hovertext=f"{row['Filename']}<br>{color_label}: {val_txt}",
         ))
 
     # Trace fantôme pour afficher une colorbar cohérente avec la carte
     # (chaque spectre est une trace de couleur fixe, donc pas de colorbar native).
+    colorbar = dict(title=color_label)
+    if colorbar_tickvals is not None:
+        colorbar["tickvals"] = colorbar_tickvals
+        colorbar["ticktext"] = colorbar_ticktext
     fig.add_trace(go.Scatter(
         x=[None], y=[None], mode="markers",
         marker=dict(colorscale="Viridis", cmin=vmin, cmax=vmax, color=[vmin],
-                    showscale=True, colorbar=dict(title=color_label)),
+                    showscale=True, colorbar=colorbar),
         showlegend=False, hoverinfo="none",
     ))
 
@@ -479,20 +564,22 @@ app.layout = html.Div([
     html.H2("Rrs Explorer -- pySAS / HyperCP"),
     html.Div([
         html.Div([
-            html.Label("Date :"),
+            html.Label("Date(s) :"),
             dcc.Dropdown(
                 id="date-dropdown",
                 options=[{"label": d, "value": d} for d in dates],
-                value=default_date,
+                value=[default_date] if default_date else [],
+                multi=True,
                 clearable=False,
-                style={"width": "200px"},
+                style={"width": "320px"},
             ),
         ], style={"display": "inline-block", "marginRight": "40px"}),
         html.Div([
             html.Label("Couleur des points (carte) :"),
             dcc.Dropdown(
                 id="color-dropdown",
-                options=[{"label": k, "value": k} for k in COLOR_VARIABLES] + [{"label": "QWIP", "value": "QWIP"}],
+                options=[{"label": k, "value": k} for k in COLOR_VARIABLES]
+                        + [{"label": "QWIP", "value": "QWIP"}, {"label": "Date", "value": "Date"}],
                 value="Heure UTC",
                 clearable=False,
                 style={"width": "220px"},
@@ -579,10 +666,10 @@ def toggle_qwip_method_dropdown(color_choice):
     Input("color-dropdown", "value"),
     Input("qwip-method-dropdown", "value"),
 )
-def update_map(date_str, color_choice, qwip_method):
-    if not date_str:
+def update_map(date_strs, color_choice, qwip_method):
+    if not date_strs:
         return go.Figure(), 0, 1, {}, 0
-    day = get_day_data(date_str)
+    day = get_combined_day_data(date_strs)
     wavelengths = day["wavelengths"]
     marks = {float(w): f"{w:.0f}" for w in wavelengths[::10]}
     default_wl = float(wavelengths[len(wavelengths) // 2])
@@ -594,6 +681,13 @@ def update_map(date_str, color_choice, qwip_method):
         # Fixed range keyed to the Dierssen et al. thresholds (0.05 caution, 0.1 invalid)
         # so a rare extreme outlier doesn't wash out the color scale for everyone else.
         map_fig = build_map_figure(day["df_casts"], color_values, color_label, cmin=0, cmax=0.15)
+    elif color_choice == "Date":
+        date_codes, date_labels = pd.factorize(day["df_casts"]["Date"], sort=True)
+        map_fig = build_map_figure(
+            day["df_casts"], date_codes.astype(float), "Date",
+            hover_values=day["df_casts"]["Date"],
+            colorbar_tickvals=list(range(len(date_labels))), colorbar_ticktext=list(date_labels),
+        )
     else:
         color_col, color_label = COLOR_VARIABLES.get(color_choice, ("Hour", "Heure (UTC)"))
         color_values = day["df_casts"][color_col]
@@ -610,12 +704,12 @@ def update_map(date_str, color_choice, qwip_method):
     Input("map-graph", "clickData"),
     State("date-dropdown", "value"),
 )
-def update_spectra(click_data, date_str):
-    if click_data is None or not date_str:
+def update_spectra(click_data, date_strs):
+    if click_data is None or not date_strs:
         return build_empty_spectra_figure()
     point = click_data["points"][0]
     filename, timetag2 = point["customdata"]
-    day = get_day_data(date_str)
+    day = get_combined_day_data(date_strs)
     idx = find_cast_index(day["df_casts"], filename, int(timetag2))
     if idx is None:
         return build_empty_spectra_figure()
@@ -629,11 +723,11 @@ def update_spectra(click_data, date_str):
     Input("wl-slider", "value"),
     State("date-dropdown", "value"),
 )
-def update_intercomparison(selected_data, wavelength, date_str):
-    if not date_str or wavelength is None:
+def update_intercomparison(selected_data, wavelength, date_strs):
+    if not date_strs or wavelength is None:
         return build_empty_splom_figure(), []
 
-    day = get_day_data(date_str)
+    day = get_combined_day_data(date_strs)
     wavelengths = day["wavelengths"]
     cube = day["cube"]
     idx = selected_indices(selected_data, cube.shape[0])
@@ -658,21 +752,28 @@ def update_intercomparison(selected_data, wavelength, date_str):
     Input("color-dropdown", "value"),
     State("date-dropdown", "value"),
 )
-def update_selected_spectra(selected_data, method, color_choice, date_str):
-    if not date_str or not method:
+def update_selected_spectra(selected_data, method, color_choice, date_strs):
+    if not date_strs or not method:
         return go.Figure()
-    day = get_day_data(date_str)
+    day = get_combined_day_data(date_strs)
     idx = selected_indices(selected_data, day["cube"].shape[0])
 
     if color_choice == "QWIP":
         method_idx = METHODS.index(method)
         color_values = day["qwip"][:, method_idx]
         color_label = f"QWIP ({method})"
+        return build_selected_spectra_figure(day, idx, method, color_values, color_label)
+    elif color_choice == "Date":
+        date_codes, date_labels = pd.factorize(day["df_casts"]["Date"], sort=True)
+        return build_selected_spectra_figure(
+            day, idx, method, date_codes.astype(float), "Date",
+            hover_values=day["df_casts"]["Date"],
+            colorbar_tickvals=list(range(len(date_labels))), colorbar_ticktext=list(date_labels),
+        )
     else:
         color_col, color_label = COLOR_VARIABLES.get(color_choice, ("Hour", "Heure (UTC)"))
         color_values = day["df_casts"][color_col]
-
-    return build_selected_spectra_figure(day, idx, method, color_values, color_label)
+        return build_selected_spectra_figure(day, idx, method, color_values, color_label)
 
 
 if __name__ == "__main__":

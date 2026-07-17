@@ -42,7 +42,15 @@ nothing is re-read from disk.
 
 ### Date and color variable
 
-- **Date**: lists every date with an `AnalysisComparison/L2_Methods_Quotes_<date>.csv`.
+- **Date(s)**: multi-select, lists every date with an `AnalysisComparison/L2_Methods_Quotes_<date>.csv`.
+  Defaults to only the most recent date; add more to combine several days into one view
+  (map, spectra, SPLOM). Each day is read/cached independently the first time it's picked,
+  then simply concatenated -- cheap even for many days. If selected dates don't share the
+  exact same waveband grid (the L1B binning can differ by a band or two day to day), every
+  day beyond the first (chronologically) is linearly resampled onto the first day's grid.
+  With more than one date selected, the map does not draw a connecting line between casts
+  (it would otherwise draw a spurious line from the last cast of one day to the first of
+  the next), and cast labels/legends include the date alongside the time.
 - **Couleur des points (carte)**: what the map markers (and, by extension, the "Spectres
   comparés" panel below) are colored by:
   - Heure UTC, Vent (m/s), Li/Es (nuage, cloud-flag ratio), Angle zénithal solaire,
@@ -52,6 +60,8 @@ nothing is re-read from disk.
     processing methods' QWIP score to map, since QWIP is per-method rather than a
     single ancillary value. The color scale is fixed to 0-0.15 (not autoscaled) so a
     rare extreme outlier doesn't wash out the color for every other point.
+  - **Date**: useful specifically when several dates are selected, to tell casts from
+    different days apart at a glance.
 
 ### Map (top-left) and per-point spectra (top-right)
 
