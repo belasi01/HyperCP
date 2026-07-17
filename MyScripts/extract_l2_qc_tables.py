@@ -677,7 +677,14 @@ if __name__ == "__main__":
         SKY_MODELS = [m.strip() for m in sys.argv[2].split(",")]
     else:
         SKY_MODELS = ["M99", "Z17", "3C"]
-    METHODS = [f"{model}{correction}" for model in SKY_MODELS for correction in ("NN", "NIR", "SimSpec")]
+    # NIR/SimSpec offsets are not relevant on top of 3C (decided 2026-07-17) -- only
+    # <model>NN is produced for 3C, matching what apply_nir_corrections.py now generates.
+    SKIP_NIR_CORRECTIONS_FOR = {"3C"}
+    METHODS = [
+        f"{model}{correction}"
+        for model in SKY_MODELS
+        for correction in (("NN",) if model in SKIP_NIR_CORRECTIONS_FOR else ("NN", "NIR", "SimSpec"))
+    ]
 
     print(f"📊 [Diagnostics] Analyzing metrics for date: {DATE_STR}")
     print(f"📂 Source directory: {BASE_PATH}")

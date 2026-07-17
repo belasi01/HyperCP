@@ -139,7 +139,11 @@ else
 
     for model in ${MODELS_LIST}; do
       python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "${model}NN"
-      python apply_nir_corrections.py --date "${DATE_TARGET}" --model "${model}"
+      # NIR/SimSpec offsets are not relevant on top of 3C (decided 2026-07-17) -- only
+      # 3CNN is kept, skip the derivation step entirely to avoid wasting time on it.
+      if [ "${model}" != "3C" ]; then
+        python apply_nir_corrections.py --date "${DATE_TARGET}" --model "${model}"
+      fi
     done
 
     python extract_l2_qc_tables.py "${DATE_TARGET}" "${MODELS_CSV}"
@@ -169,7 +173,11 @@ else
 
     for model in ${MODELS_LIST}; do
       python run_pySAS006_processing.py --date "${DATE_TARGET}" --level "L2" --version "${model}NN"
-      python apply_nir_corrections.py --date "${DATE_TARGET}" --model "${model}"
+      # NIR/SimSpec offsets are not relevant on top of 3C (decided 2026-07-17) -- only
+      # 3CNN is kept, skip the derivation step entirely to avoid wasting time on it.
+      if [ "${model}" != "3C" ]; then
+        python apply_nir_corrections.py --date "${DATE_TARGET}" --model "${model}"
+      fi
     done
 
     python extract_l2_qc_tables.py "${DATE_TARGET}" "${MODELS_CSV}"

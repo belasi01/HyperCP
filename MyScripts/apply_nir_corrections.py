@@ -229,6 +229,9 @@ CORRECTION_FUNCS = {
     'SimSpec': apply_simspec_nir,
 }
 
+# Sky models for which NIR/SimSpec offsets are not produced (only <model>NN is kept).
+SKIP_NIR_CORRECTIONS_FOR = {'3C'}
+
 
 # ==============================================================================
 # OUTPUT GENERATION (SeaBASS + plots via HyperCP APIs)
@@ -400,6 +403,13 @@ def main():
     print(f"   Config : {cfg_path}")
 
     for model in models:
+        # NIR/SimSpec offsets are not relevant on top of 3C (decided 2026-07-17 after
+        # reviewing results) -- only <model>NN is produced for 3C, skip the rest here so
+        # every caller (this script or download_and_run_hypercp.sh) gets it for free.
+        if model in SKIP_NIR_CORRECTIONS_FOR:
+            print(f"\n⏩ {model}: NIR/SimSpec skipped (not relevant for this model).")
+            continue
+
         nn_dir = os.path.join(PATH_DATA, f"{model}NN", "L2")
         if not os.path.isdir(nn_dir):
             print(f"\n⚠️  {model}NN/ not found — run the NN processing first.")
