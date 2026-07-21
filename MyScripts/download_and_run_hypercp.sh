@@ -20,7 +20,7 @@ fi
 source "${CONFIG_FILE}"
 
 LFTP_BIN=${LFTP_BIN:-lftp}
-source /opt/miniconda3/etc/profile.d/conda.sh
+source "${CONDA_SH_PATH}"
 conda activate hypercp
 
 LOG_DIR="${MAIN_DATA_PATH}pySAS/Automated_Pipeline_Log"
@@ -89,6 +89,9 @@ else
     set ssl:verify-certificate no;
     set net:timeout 20;
     set net:max-retries 20;
+    set net:connection-limit 1;
+    set hftp:cache no;
+    set http:use-propfind true;
     open -u ${WEBDAV_USER},${WEBDAV_PASS} ${WEBDAV_HOST};
 
     echo '   -> Syncing TSG data (flattening LEGs structural paths)...';

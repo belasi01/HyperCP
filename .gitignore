@@ -97,3 +97,4 @@ Config/*
 run_*.py
 !run_Sample_Data.py
 
+MyScripts/pipeline_config.env
