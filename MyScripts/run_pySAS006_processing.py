@@ -111,7 +111,7 @@ L1B_REGIME = ""
 # Batch options
 MULTI_TASK = True  # Multiple threads for HyperSAS (any level) or TriOS (only L1A and up)
 MULTI_LEVEL = False  # Process raw (L0) to Level-2 (L2)
-CLOBBER = True      # True overwrites existing files
+CLOBBER = env["CLOBBER"].strip().lower() == "true"  # True overwrites existing files
 
 # Définition automatique des dossiers d'entrée et de sortie selon le niveau demandé
 PATH_INPUT = PATH_DATA
