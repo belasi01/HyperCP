@@ -1,0 +1,17 @@
+# Complementary conda environment for MyScripts/ (Simon's operational pySAS pipeline
+# and analysis tools: extract_l2_qc_tables.py, rrs_explorer_app.py, ...).
+#
+# This does NOT replace the root ../environment.yml — it only adds the packages MyScripts
+# needs on top of the base "hypercp" env. Everything else MyScripts imports (h5py, numpy,
+# pandas, matplotlib, scipy, dash, plotly, fpdf2) is already covered by the root file.
+#
+# Usage (after creating/activating the base env per the root environment.yml):
+#   conda env update -n hypercp -f MyScripts/environment.yml --prune
+#
+# cartopy pulls in GEOS/PROJ native libraries, which is why it's kept out of the root
+# environment.yml (shared with upstream NASA/EUMETSAT HyperCP) and installed here via
+# conda-forge instead of pip for cross-platform binary compatibility.
+channels:
+  - conda-forge
+dependencies:
+  - cartopy=0.25
