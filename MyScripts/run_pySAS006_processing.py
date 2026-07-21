@@ -435,7 +435,11 @@ if __name__ == "__main__":
             orig_cal_dir = os.path.splitext(PATH_CFG)[0] + "_Calibration"
             run_cal_dir = os.path.splitext(cfg_run_path)[0] + "_Calibration"
             if not os.path.exists(run_cal_dir):
-                os.symlink(orig_cal_dir, run_cal_dir)
+                try:
+                    os.symlink(orig_cal_dir, run_cal_dir)
+                except OSError:
+                    # Some network filesystems (e.g. CIFS without mfsymlinks) cannot create symlinks.
+                    shutil.copytree(orig_cal_dir, run_cal_dir)
 
         # ===========================================================================
         # 4. MULTIPROCESSING POOL / NASA CORE RUN METHOD INVOCATION
