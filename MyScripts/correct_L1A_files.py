@@ -43,56 +43,6 @@ def interpolate_heading_timeaware(heading_deg, time_s):
     return h_interp
 
 
-def correct_SAS_heading_L1A(inpath, outpath, fn):
-    """
-    Copie le fichier L1A vers le dossier interpolé, lit le dataset /UMTWR_v0.tdf/HEADING,
-    remplace la colonne SAS par les données interpolées temporelles, et réécrit en place.
-    """
-    infn = os.path.join(inpath, fn)
-    outfn = os.path.join(outpath, fn)
-
-    # 1) S'assurer que le dossier de sortie existe et copier le fichier
-    os.makedirs(outpath, exist_ok=True)
-
-    plot_dir = os.path.join(outpath, "plots")
-    os.makedirs(plot_dir, exist_ok=True)
-
-    shutil.copy2(infn, outfn)
-
-    # 2) Lecture/Écriture HDF5 en place
-    with h5py.File(outfn, "r+") as h5f:
-        dataset_path = "/UMTWR_v0.tdf/HEADING"
-        time_path = "/UMTWR_v0.tdf/TIMETAG2"
-
-        if dataset_path not in h5f or time_path not in h5f:
-            print(f"⚠️ Dataset introuvable dans {fn}, fichier copié mais non modifié.")
-            return
-
-        # Lecture des structures de données (numpy compound arrays)
-        heading_data = h5f[dataset_path][...]
-        time_data = h5f[time_path][...]
-
-        # Extraction des colonnes spécifiques (comme vos structures R $SAS et $NONE)
-        heading_sas = heading_data['SAS']
-        sastime_none = time_data['NONE']
-
-        # Calcul de la correction
-        sas_corrected = interpolate_heading_timeaware(heading_sas, sastime_none)
-
-        # vérification
-        plot_verification(sastime_none, heading_sas, sas_corrected, outfn, plot_dir)
-
-        # Modification de la colonne en mémoire
-        heading_data['SAS'] = sas_corrected
-
-
-
-        # Écriture en place : contrairement à R, h5py permet d'écraser directement
-        # le contenu d'un dataset existant sans le supprimer si la dimension reste identique.
-        h5f[dataset_path][...] = heading_data
-
-    print(f"✅ Interpolated SAS heading written in {outfn}")
-
 
 def plot_verification(time_raw, heading_orig, heading_interp, filename, plot_dir):
     """
@@ -228,15 +178,13 @@ if __name__ == "__main__":
 
     if RUN_BATCH == 1:
         print(f"🔍 Recherche de fichiers dans : {inpath}")
-        # Liste tous les fichiers qui finissent par .hdf dans le dossier L1A
         files = [f for f in os.listdir(inpath) if f.endswith('.hdf')]
         print(f"📋 {len(files)} fichier(s) trouvé(s) : {files}")
 
         for fn in files:
-            correct_SAS_heading_L1A(inpath, outpath, fn)
+            correct_L1A_file(inpath, outpath, fn, roll_offset=0)
 
     else:
-        # Fichier unique pour votre premier test
         fn = "pySAS006_20260701_180621_L1A.hdf"
         print(f"🚀 Traitement du fichier unique : {fn}")
-        correct_SAS_heading_L1A(inpath, outpath, fn)
+        correct_L1A_file(inpath, outpath, fn, roll_offset=0)

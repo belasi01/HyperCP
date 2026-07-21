@@ -29,3 +29,5 @@ dependencies:
     - punpy
     - fpdf2
     - lmfit
+    - dash
+    - plotly

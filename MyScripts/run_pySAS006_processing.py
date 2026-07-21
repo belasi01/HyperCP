@@ -72,9 +72,11 @@ parser.add_argument("--level", type=str, default="L2", choices=["L1A", "L1AQC", 
 parser.add_argument("--version", type=str, default="M99SimSpec",
                     choices=["M99SimSpec", "M99NIR", "M99NN",
                              "Z17SimSpec", "Z17NIR", "Z17NN",
-                             "3CSimSpec", "3CNIR", "3CNN",
-                             "ALL"], # à modifier en temps et lieu
-                    help="Version de traitement L2 spécifique (9 options)")
+                             "3CSimSpec", "3CNIR", "3CNN"],
+                    help="Version de traitement L2 specifique (9 options). Pour lancer un "
+                         "SKY_MODEL complet (NN + derivation NIR/SimSpec), voir "
+                         "download_and_run_hypercp.sh qui appelle ce script avec '<model>NN' "
+                         "puis apply_nir_corrections.py --model <model>.")
 
 args = parser.parse_args()
 
@@ -95,9 +97,6 @@ PATH_ANC = os.path.join(PATH_DATA, "Ancillary", f"{CRUISE}_{EXPERIMENT}_Ancillar
 PATH_CFG = os.path.join(PATH_HCP, "Config", env["CFG_FILE_NAME"])
 PATH_HDR = os.path.join(PATH_HCP, "Config", env["HDR_FILE_NAME"])
 
-# Parsing propre de la liste des versions L2 séparées par des virgules
-ALL_L2_VERSIONS = [v.strip() for v in env["ALL_L2_VERSIONS"].split(",")]
-
 #########
 # the pySAS006 has a ROLL of +5° on the benchtop.  This offsset will be subtracted in the L1A file
 #ROLL_OFFSET = -5
@@ -112,7 +111,7 @@ L1B_REGIME = ""
 # Batch options
 MULTI_TASK = True  # Multiple threads for HyperSAS (any level) or TriOS (only L1A and up)
 MULTI_LEVEL = False  # Process raw (L0) to Level-2 (L2)
-CLOBBER = False      # True overwrites existing files
+CLOBBER = True      # True overwrites existing files
 
 # Définition automatique des dossiers d'entrée et de sortie selon le niveau demandé
 PATH_INPUT = PATH_DATA
@@ -158,9 +157,10 @@ if not MULTI_LEVEL:
     #
 
 
-def run_Command(fp_input_files, output_path=None):
+def run_Command(fp_input_files, output_path=None, cfg_path=None):
     """Run either directly or using multiprocessor pool below."""
     #   fp_input_files is a string unless TriOS RAW, then list.
+    effective_cfg = cfg_path or PATH_CFG
     if output_path is not None:
         local_path_output = output_path
     else:
@@ -206,7 +206,7 @@ def run_Command(fp_input_files, output_path=None):
             print("************************************************")
 
             Command(
-                PATH_CFG,
+                effective_cfg,
                 from_level,
                 fp_input_files,
                 local_path_output,
@@ -246,7 +246,7 @@ def run_Command(fp_input_files, output_path=None):
 
             try:
                 Command(
-                    PATH_CFG,
+                    effective_cfg,
                     from_level,
                     fp_input_files,
                     local_path_output,
@@ -269,88 +269,27 @@ def worker(fp_input_files):
     import matplotlib.pyplot as plt
     if not hasattr(plt.cm, 'get_cmap'):
         plt.cm.get_cmap = mpl.colormaps.get_cmap
-    # fp_input_files is a list unless multitasking, in which case it's a string, unless it's TriOS RAW
+    # Each item passed is either:
+    #   - a list of file paths (TriOS RAW triplets)
+    #   - a list of (file, version, cfg_path) tuples (non-MULTI_TASK SeaBird)
+    #   - a (file, version, cfg_path) tuple (MULTI_TASK SeaBird)
     if isinstance(fp_input_files, list):
         if INST_TYPE.lower() == "trios" and (MULTI_LEVEL or 'RAW' in FROM_LEVELS):
             print(f"### Processing {fp_input_files} ...")
-            run_Command(fp_input_files,output_path=PATH_OUTPUT)
+            run_Command(fp_input_files, output_path=PATH_OUTPUT)
         else:
-            for file in fp_input_files:
-                #print(f"### Processing {os.path.basename(file)} ...")
-                #run_Command(file,output_path=PATH_OUTPUT)
-                file, current_version = item if isinstance(item, tuple) else (item, L2_VERSION)
+            for item in fp_input_files:
+                file, current_version, cfg_path = item if len(item) == 3 else (*item, None)
                 print(f"### Processing {os.path.basename(file)} ...")
-
-                # On calcule dynamiquement le sous-dossier exact
                 local_out = os.path.join(PATH_DATA, current_version) if PROC_LEVEL == "L2" else PATH_OUTPUT
-                run_Command(file, output_path=local_out)
+                run_Command(file, output_path=local_out, cfg_path=cfg_path)
             print(f"### Finished {os.path.basename(file)}")
     else:
-        #print(f"### Multithread Processing {os.path.basename(fp_input_files)} ...")
-        #run_Command(fp_input_files,output_path=PATH_OUTPUT)
-        file, current_version = fp_input_files if isinstance(fp_input_files, tuple) else (fp_input_files, L2_VERSION)
+        file, current_version, cfg_path = fp_input_files if len(fp_input_files) == 3 else (*fp_input_files, None)
         print(f"### Multithread Processing {os.path.basename(file)} ...")
-
         local_out = os.path.join(PATH_DATA, current_version) if PROC_LEVEL == "L2" else PATH_OUTPUT
-        run_Command(file, output_path=local_out)
+        run_Command(file, output_path=local_out, cfg_path=cfg_path)
         print(f"### Finished {os.path.basename(file)}")
-
-
-# ==============================================================================
-# NOUVELLE APPROCHE POUR ÉVITER DE ROULER 3 x les méthodes rho shy
-# ==============================================================================
-from Source.ConfigFile import ConfigFile
-from Source.ProcessL2 import ProcessL2
-
-
-def execute_turbo_L2(root, station, outFilePath_base, model_prefix):
-    """
-    Exécute le traitement L2 de base (NN), puis applique immédiatement
-    les fonctions NIR et SimSpec de la NASA en mémoire avant l'écriture finale.
-    """
-    # 1. Configuration initiale forcée à No Correction (NN)
-    ConfigFile.settings["bL2SimpleNIRCorrection"] = 0
-    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 0
-
-    # Appel de la fonction originale de la NASA pour générer la base NN
-    # (Calcule les moyennes d'ensembles, les géométries solaires et le rho_sky)
-    node_nn = ProcessL2.processL2(root, station)
-
-    # Sauvegarde normale du fichier de base M99NN, Z17NN ou 3CNN
-    # (Ici, le code original d'HyperCP écrit node_nn dans outFilePath_base)
-
-    # ----------------------------------------------------------------------
-    # EXTENSION TURBO UQAR : CLONAGE ET CORRECTIONS EN MÉMOIRE
-    # ----------------------------------------------------------------------
-    # On récupère les structures spécifiques requises par la fonction native
-    sensor = "HYPER"
-    F0 = root.getGroup("CALIBRATION").getDataset("F0")  # Exemple de récupération de F0
-
-    # --- BRANCHEMENT MÉTHODE NIR ---
-    import copy
-    node_nir = copy.deepcopy(node_nn)  # Duplication complète de l'objet en mémoire
-    ConfigFile.settings["bL2SimpleNIRCorrection"] = 1
-    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 0
-
-    # Appel direct de la fonction native de la NASA que vous avez trouvée !
-    ProcessL2.nirCorrection(node_nir, sensor, F0)
-
-    # Modification du chemin de sortie pour le dossier correspondant (ex: M99NIR)
-    outFilePath_nir = outFilePath_base.replace(f"{model_prefix}NN", f"{model_prefix}NIR")
-    # Enregistrement du node_nir via la méthode de sauvegarde d'HyperCP
-
-    # --- BRANCHEMENT MÉTHODE SIMSPEC ---
-    node_sim = copy.deepcopy(node_nn)
-    ConfigFile.settings["bL2SimpleNIRCorrection"] = 0
-    ConfigFile.settings["bL2SimSpecNIRCorrection"] = 1
-
-    # Deuxième appel direct de la fonction native
-    ProcessL2.nirCorrection(node_sim, sensor, F0)
-
-    outFilePath_sim = outFilePath_base.replace(f"{model_prefix}NN", f"{model_prefix}SimSpec")
-    # Enregistrement du node_sim via la méthode de sauvegarde d'HyperCP
-
-    print(f"⚡ [Turbo L2] Applied native NIR & SimSpec corrections in-memory for {model_prefix}")
 
 
 if __name__ == "__main__":
@@ -455,12 +394,9 @@ if __name__ == "__main__":
     # ===========================================================================
     # 3. L2 METHODS MATRIX LOOP / CONFIGURATION OF JSON CONFIG AND HEADERS
     # ===========================================================================
-    if PROC_LEVEL == "L2" and L2_VERSION == "ALL":
-        liste_versions = ALL_L2_VERSIONS
-        nb_versions = len(liste_versions)
-        print(f"🚀 [SUPER-BATCH L2] Sequential execution of the {nb_versions} processing configurations...")
-    else:
-        liste_versions = [L2_VERSION]
+    liste_versions = [L2_VERSION]
+
+    cfg_run_path = PATH_CFG  # default for non-L2 levels
 
     for v in liste_versions:
         if PROC_LEVEL == "L2":
@@ -484,13 +420,22 @@ if __name__ == "__main__":
             hdr["rho_correction"] = "M99" if "M99" in v else ("Z17" if "Z17" in v else "3C")
             hdr["NIR_residual_correction"] = "None" if "NN" in v else ("NIR" if "NIR" in v else "SimSpec")
 
-            with open(PATH_CFG, 'w', encoding='utf-8') as f:
+            # Write directly to version-specific files — never overwrites the original PATH_CFG
+            cfg_run_path = os.path.join(PATH_OUTPUT, f"config_run_{v}.cfg")
+            hdr_run_path = os.path.join(PATH_OUTPUT, f"header_run_{v}.hdr")
+            with open(cfg_run_path, 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=4)
-            with open(PATH_HDR, 'w', encoding='utf-8') as f:
+            with open(hdr_run_path, 'w', encoding='utf-8') as f:
                 json.dump(hdr, f, indent=4, ensure_ascii=False)
 
-            shutil.copy2(PATH_CFG, os.path.join(PATH_OUTPUT, f"config_run_{v}.cfg"))
-            shutil.copy2(PATH_HDR, os.path.join(PATH_OUTPUT, f"header_run_{v}.hdr"))
+            # HyperCP resolves the calibration directory by convention:
+            # <cfg_basename>_Calibration, sibling to the .cfg file (ConfigFile.getCalibrationDirectory).
+            # Point the version-specific cfg at the same calibration files as PATH_CFG (they don't
+            # change between L2 versions -- only the rho/NIR toggles above do).
+            orig_cal_dir = os.path.splitext(PATH_CFG)[0] + "_Calibration"
+            run_cal_dir = os.path.splitext(cfg_run_path)[0] + "_Calibration"
+            if not os.path.exists(run_cal_dir):
+                os.symlink(orig_cal_dir, run_cal_dir)
 
         # ===========================================================================
         # 4. MULTIPROCESSING POOL / NASA CORE RUN METHOD INVOCATION
@@ -509,9 +454,9 @@ if __name__ == "__main__":
                     unique_fpf_input_triplets = [list(x) for x in set(tuple(x) for x in fpf_input_triplets)]
                     pool.map(worker, unique_fpf_input_triplets)
                 else:
-                    pool.map(worker, [(file, v) for file in fpf_input])
+                    pool.map(worker, [(file, v, cfg_run_path) for file in fpf_input])
         else:
-            worker([(file, v) for file in fpf_input])
+            worker([(file, v, cfg_run_path) for file in fpf_input])
 
         if PROC_LEVEL == "L2":
             print(f"✅ Configuration version {v} completed successfully.")
