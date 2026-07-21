@@ -13,7 +13,10 @@ synced copy) runs their own local instance -- there is no shared server.
 ## Requirements
 
 - `hypercp` conda environment (`dash` and `plotly` are in `environment.yml`; run
-  `conda env update --file environment.yml --prune` if they're missing).
+  `conda env update -n hypercp -f environment.yml` if they're missing -- never add
+  `--prune` when applying `MyScripts/environment.yml` on top, since that file only lists
+  the MyScripts-specific extras and `--prune` would remove anything else in the env not
+  listed in whichever file you point it at).
 - `MyScripts/pipeline_config.env` filled in (same file used by `download_and_run_hypercp.sh`
   and `extract_l2_qc_tables.py` -- `MAIN_DATA_PATH` and `PATH_HCP` in particular).
 - At least one date already processed through `extract_l2_qc_tables.py`, i.e.
@@ -32,6 +35,33 @@ Then open **http://127.0.0.1:8050** in a browser. The terminal running the comma
 stay open (or backgrounded) for as long as you want the tool available; closing the
 browser tab does not stop the server. To stop it: `Ctrl-C` in the terminal, or
 `pkill -f rrs_explorer_app.py`.
+
+### Running on a remote server (e.g. srimgsat via JupyterLab)
+
+If `rrs_explorer_app.py` is launched from a JupyterLab terminal on a remote host (e.g.
+`srimgsat04`, accessed at `https://jupyter-srimgsat.uqar.ca/user/<user>/lab`),
+`http://127.0.0.1:8050` in your local browser points at your *own* machine, not the
+remote one, so the link from the terminal output won't load. Forward the port over SSH
+instead. From a terminal on your local machine (VPN connected):
+
+```bash
+ssh -J <user>@calculs.uqar.ca -L 8050:127.0.0.1:8050 <user>@srimgsat04
+```
+
+`-J` (ProxyJump) routes the connection through `calculs.uqar.ca` (required to reach
+`srimgsat04` directly), and `-L` forwards the remote port 8050 to your local
+`127.0.0.1:8050` through that same connection. Leave this SSH session open, then browse
+to `http://127.0.0.1:8050` locally as usual. If your SSH client is too old for `-J`, use
+the equivalent `ProxyCommand`:
+
+```bash
+ssh -o ProxyCommand="ssh -W %h:%p <user>@calculs.uqar.ca" -L 8050:127.0.0.1:8050 <user>@srimgsat04
+```
+
+(A JupyterHub `jupyter-server-proxy` URL such as
+`https://jupyter-srimgsat.uqar.ca/user/<user>/proxy/8050/` would be the more elegant
+option if that extension is enabled server-side, but it wasn't on this deployment as of
+2026-07-21 -- the SSH tunnel above is the confirmed-working fallback.)
 
 The first time a given date is selected, all 7 methods' spectra for that day are read
 from the L2 HDF5 files and cached in memory (a few seconds for a full day). Every
