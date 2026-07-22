@@ -6,7 +6,13 @@
 # pandas, matplotlib, scipy, dash, plotly, fpdf2) is already covered by the root file.
 #
 # Usage (after creating/activating the base env per the root environment.yml):
-#   conda env update -n hypercp -f MyScripts/environment.yml --prune
+#   conda env update -n hypercp -f MyScripts/environment.yml
+#
+# NEVER add --prune to that command. Prune removes any package installed in the
+# target env that isn't listed in the file being applied, and this file intentionally
+# lists only the MyScripts-specific addition (not the full env), so --prune would
+# uninstall unrelated packages (e.g. h5py) that this file never mentions. Without
+# --prune, `conda env update` is purely additive.
 #
 # cartopy pulls in GEOS/PROJ native libraries, which is why it's kept out of the root
 # environment.yml (shared with upstream NASA/EUMETSAT HyperCP) and installed here via

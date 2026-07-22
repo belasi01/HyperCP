@@ -12,7 +12,7 @@ CONFIG_FILE="${SCRIPT_DIR}/pipeline_config.env"
 # Vérification de sécurité
 if [ ! -f "${CONFIG_FILE}" ]; then
     echo "❌ Error: Configuration file missing at ${CONFIG_FILE}"
-    echo "👉 Please copy pipeline_config.env.example to pipeline_config.env and adjust paths."
+    echo "👉 Please copy pipeline_config.env.template to pipeline_config.env and adjust paths."
     exit 1
 fi
 
