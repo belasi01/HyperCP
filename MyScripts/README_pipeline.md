@@ -48,7 +48,8 @@ For the interactive tool used to browse the L2 results this pipeline produces, s
 | `CLOBBER` | `true`: `run_pySAS006_processing.py` overwrites existing outputs at every level — needed for a full reprocessing from RAW. `false`: only recomputes files that are missing or previously failed, skips everything already successfully processed. Leave `true` for routine daily cron use (the WebDAV sync is already incremental, and Controller-level staleness checks prevent reprocessing untouched files — see `CLAUDE.md`); set to `false` only if you deliberately want to protect existing outputs while patching a subset of dates. |
 | `WEBDAV_HOST` / `WEBDAV_USER` / `WEBDAV_PASS` | Amundsen Science WebDAV credentials. |
 | `CRUISE` / `EXPERIMENT` | Used to build ancillary filenames (`<CRUISE>_<EXPERIMENT>_Ancillary_<date>.sb`) and passed through to SeaBASS metadata. |
-| `ROLL_OFFSET` | Static degrees subtracted from raw ROLL in `correct_L1A_files.py::process_roll_offset`, applied unconditionally to every date processed. Currently `-5`. **This needs periodic re-validation** — see "IMU roll bias" below. |
+| `ROLL_OFFSET` | Static degrees added to raw ROLL in `correct_L1A_files.py::process_roll_offset`, applied unconditionally to every date processed. Currently `-5`. **This needs periodic re-validation** — see "IMU roll bias" below. |
+| `PITCH_OFFSET` | Same mechanism as `ROLL_OFFSET`, but for PITCH (`correct_L1A_files.py::process_pitch_offset`). Added 2026-07-31 after a second physical-disturbance event (2026-07-30, see below) made it clear a single-axis correction isn't enough. Currently `0` (not yet corrected — wiring only, values/reprocessing to be decided per date). |
 | `PATH_HCP` | Absolute path to the HyperCP repo root (trailing slash). |
 | `MAIN_DATA_PATH` | Absolute path to the data root; `TSG/`, `ATS/`, and `pySAS/` subfolders live under it (auto-created if missing). |
 | `LFTP_BIN` | Path to the `lftp` binary used for the WebDAV mirror. |
@@ -89,16 +90,37 @@ python MyScripts/run_pySAS006_processing.py --date 20260721 --level L1AQC
 
 ## Known quirks / open items
 
-- **IMU roll bias**: `ROLL_OFFSET=-5` is applied to every date unconditionally. Raw ROLL
-  actually drifted from about +5° (July 1) to +8.7° (July 17-18) rather than staying
-  fixed, then jumped to ~14° along with PITCH on 2026-07-18 afternoon (consistent with a
-  physical knock/reorientation of the sensor, not electronic drift), before both dropped
-  back to near 0° around 2026-07-19 20:20 UTC and have stayed there since (confirmed
-  through 2026-07-20, the last full day checked). A single static `-5°` offset is
-  therefore already an approximation pre-2026-07-19, and is likely *wrong* (would
-  introduce a new -5° bias) for dates from 2026-07-19 20:20 UTC onward. Worth revisiting
-  before reprocessing that range from RAW — either date-conditional offsets or dropping
-  the correction entirely for recent dates.
+- **IMU roll/pitch bias**: `ROLL_OFFSET` (and, as of 2026-07-31, `PITCH_OFFSET`) are
+  applied to every date unconditionally, but the real bias is not a single constant —
+  it has moved at least four times so far, always in a way consistent with the sensor
+  physically getting knocked or re-seated rather than electronic drift (raw PITCH and
+  ROLL jump together, by comparable amounts, and are otherwise very stable within a
+  period):
+  - **2026-07-01 to 07-17**: raw ROLL drifted from about +5° to +8.7°, raw PITCH stayed
+    near 0°.
+  - **2026-07-18 afternoon to 07-19 ~20:20 UTC**: both ROLL and PITCH jumped to ~14°
+    together, then dropped back to near 0° around 2026-07-19 20:20 UTC.
+  - **2026-07-19 20:20 UTC to 07-29**: both near 0° (confirmed through 2026-07-20; the
+    07-29 GPS failure — see below — doesn't appear to have disturbed the IMU).
+  - **2026-07-30**: both jumped again, to a very stable ROLL median ~18.1° and PITCH
+    median ~19.8° for the entire day (two mid-day L1A files are even missing the
+    SATTHS1500A group entirely), almost certainly from physically handling the mast
+    while fixing the GPS that day.
+  A single global static offset per axis is therefore only ever an approximation for
+  whichever period it was tuned to, and actively wrong for every other period —
+  `ROLL_OFFSET=-5` in particular has been *wrong* (introducing a new bias rather than
+  removing one) for most of the cruise since 2026-07-19. `PITCH_OFFSET` was added
+  2026-07-31 (currently `0`, not yet corrected) so the mechanism exists, but the
+  question of per-date-range values — and reprocessing the affected date ranges from
+  RAW once decided — is still open.
+- **GPS outage (2026-07-29)**: raw GPRMC STATUS degraded starting ~16:31 UTC and went
+  fully void (`V`, frozen last-known position) from ~18:31 UTC through the end of that
+  day's data. HyperCP's own L1AQC GPS-status filter (`ProcessL1aqc.py`) already flags
+  this correctly (logged "Percentage of data failed on GPS Status: 100%"), so this
+  shouldn't silently contaminate output, but no `L1AQC` output was produced for
+  2026-07-29 at all as of this writing. Resolved "momentarily" per field report on
+  2026-07-30 — the pitch/roll disturbance above happened the same day, likely from the
+  physical fix.
 - **Pre-CASCADE-leg dates**: dates before the `_Leg1-3` calibration convention (e.g.
   2026-07-05) may need the older `pySAS_Amundsen_2026.cfg` config and `AMD_LEG_00`
   ancillary naming instead of the current `CFG_FILE_NAME`/`HDR_FILE_NAME` /

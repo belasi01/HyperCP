@@ -147,8 +147,20 @@ def process_roll_offset(outfn, offset_value=-5.0):
             print(f"    📐 Offset de Roll appliqué ({offset_value}°) sur {os.path.basename(outfn)}")
 
 
+# --- FONCTION 3 : CORRECTION DE L'OFFSET DE PITCH ---
+def process_pitch_offset(outfn, offset_value=0.0):
+    """Applique un offset statique sur le Pitch en place."""
+    with h5py.File(outfn, "r+") as h5f:
+        pitch_path = "/SATTHS1500A.tdf/PITCH"
+        if pitch_path in h5f:
+            pitch_data = h5f[pitch_path][...]
+            pitch_data['NONE'] = pitch_data['NONE'] + offset_value
+            h5f[pitch_path][...] = pitch_data
+            print(f"    📐 Offset de Pitch appliqué ({offset_value}°) sur {os.path.basename(outfn)}")
+
+
 # --- FONCTION MAÎTRESSE APPELÉE PAR LE BATCH ---
-def correct_L1A_file(inpath, outpath, fn, roll_offset):
+def correct_L1A_file(inpath, outpath, fn, roll_offset, pitch_offset=0.0):
     """Copie le fichier et applique séquentiellement les corrections requises."""
     infn = os.path.join(inpath, fn)
     outfn = os.path.join(outpath, fn)
@@ -162,6 +174,7 @@ def correct_L1A_file(inpath, outpath, fn, roll_offset):
     # Exécution des corrections modulaires
     process_heading_interpolation(outfn, plot_dir)
     process_roll_offset(outfn, offset_value=roll_offset)
+    process_pitch_offset(outfn, offset_value=pitch_offset)
 
 
 # ---------------------------------------------------------------------------

@@ -49,6 +49,7 @@ CRUISE = env["CRUISE"]
 EXPERIMENT = env["EXPERIMENT"]
 MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
 ROLL_OFFSET = float(env["ROLL_OFFSET"])
+PITCH_OFFSET = float(env.get("PITCH_OFFSET", 0.0))
 
 # Ajouter ce dossier au chemin de recherche de Python
 if PATH_MY_SCRIPTS not in sys.path:
@@ -364,9 +365,10 @@ if __name__ == "__main__":
                     os.path.join(PATH_INPUT, "L1A"),
                     os.path.join(PATH_INPUT, "L1A_corrected"),
                     filename,
-                    roll_offset=ROLL_OFFSET
+                    roll_offset=ROLL_OFFSET,
+                    pitch_offset=PITCH_OFFSET
                 )
-                print(f"    ✅ Heading interpolation and Roll offset successfully applied to {filename}")
+                print(f"    ✅ Heading interpolation, Roll and Pitch offsets successfully applied to {filename}")
             except Exception as e:
                 print(f"    ❌ CRITICAL ERROR on file {filename}: {e}")
                 print(f"    ⚠️ This file might be corrupted (missing datasets). Skipping it.")
