@@ -109,6 +109,22 @@ fi
 
 
 
+# ------------------------------------------------------------------------------
+# GARDE-FOU : PAS DE DONNÉES BRUTES PYSAS = PAS DE TRAITEMENT
+# ------------------------------------------------------------------------------
+# Sans ça, tout le pipeline (L1A -> L2 -> NIR -> extract_l2_qc_tables.py) tourne
+# à vide sur une journée sans données (instrument down, panne réseau, etc.) et finit
+# par planter à la toute fin dans extract_l2_qc_tables.py (KeyError sur 'Filename',
+# faute de lignes à pivoter) au lieu de s'arrêter proprement dès le départ.
+LOG_FILE="${LOG_DIR}/pySAS_processing_${DATE_TARGET}.log"
+RAW_COUNT=$(find "${MAIN_DATA_PATH}pySAS/RAW_NoHeaders/" -maxdepth 1 -type f -name "*${DATE_TARGET}*.raw" 2>/dev/null | wc -l | tr -d ' ')
+
+if [ "${RAW_COUNT}" -eq 0 ]; then
+  MSG="⚠️  No pySAS RAW data found for ${DATE_TARGET} in ${MAIN_DATA_PATH}pySAS/RAW_NoHeaders/ -- skipping HyperCP processing (instrument down or not yet synced)."
+  echo "${MSG}"
+  echo "${MSG}" >> "${LOG_FILE}"
+  exit 0
+fi
 
 # ------------------------------------------------------------------------------
 # ÉTAPE 2 : EXÉCUTION DE LA CHAÎNE DE TRAITEMENT PYTHON

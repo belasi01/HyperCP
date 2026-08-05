@@ -87,6 +87,13 @@ python MyScripts/run_pySAS006_processing.py --date 20260721 --level L1AQC
   etc.), which would otherwise be silently lost.
 - Confirm it actually ran: check `<MAIN_DATA_PATH>pySAS/Automated_Pipeline_Log/pySAS_processing_<date>.log`
   for the full processing trace, and `cron_stderr.log` for anything that failed earlier.
+- If no pySAS RAW file matching `*<date>*.raw` exists under `<MAIN_DATA_PATH>pySAS/RAW_NoHeaders/`
+  after the WebDAV sync (instrument down, network issue, or just not synced yet), the
+  script logs a one-line warning to that date's log and exits cleanly instead of running
+  the full L1A->L2->NIR->`extract_l2_qc_tables.py` chain against nothing — that used to
+  run to completion on empty data and only fail at the very end, in
+  `extract_l2_qc_tables.py`'s pivot step (`KeyError: 'Filename'`), wasting a full cycle
+  and leaving a misleading traceback instead of a clear "no data" message.
 
 ## Known quirks / open items
 
