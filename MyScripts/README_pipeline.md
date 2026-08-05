@@ -42,11 +42,13 @@ For the interactive tool used to browse the L2 results this pipeline produces, s
 
 | Key | Meaning |
 |---|---|
-| `RUN_WebDAV` | `true`/`false`. Skip the WebDAV sync step entirely (e.g. for a local reprocessing test where the raw data is already on disk). |
-| `RUN_HCP` | `true`/`false`. Skip the HyperCP processing step entirely (e.g. to only test the WebDAV sync). |
+| `RUN_WebDAV` | `true`/`false`. Skip the Step 1 data sync entirely, regardless of `SYNC_MODE` (e.g. for a local reprocessing test where the raw data is already on disk). Name predates `SYNC_MODE`; kept for backward compatibility. |
+| `RUN_HCP` | `true`/`false`. Skip the HyperCP processing step entirely (e.g. to only test the data sync). |
 | `VERBOSE_TERMINAL` | `true`: print everything live to the terminal (use for manual/interactive runs). `false`: redirect all output to `<MAIN_DATA_PATH>pySAS/Automated_Pipeline_Log/pySAS_processing_<date>.log` (use for cron). |
-| `CLOBBER` | `true`: `run_pySAS006_processing.py` overwrites existing outputs at every level — needed for a full reprocessing from RAW. `false`: only recomputes files that are missing or previously failed, skips everything already successfully processed. Leave `true` for routine daily cron use (the WebDAV sync is already incremental, and Controller-level staleness checks prevent reprocessing untouched files — see `CLAUDE.md`); set to `false` only if you deliberately want to protect existing outputs while patching a subset of dates. |
-| `WEBDAV_HOST` / `WEBDAV_USER` / `WEBDAV_PASS` | Amundsen Science WebDAV credentials. |
+| `CLOBBER` | `true`: `run_pySAS006_processing.py` overwrites existing outputs at every level — needed for a full reprocessing from RAW. `false`: only recomputes files that are missing or previously failed, skips everything already successfully processed. Leave `true` for routine daily cron use (the sync step is already incremental, and Controller-level staleness checks prevent reprocessing untouched files — see `CLAUDE.md`); set to `false` only if you deliberately want to protect existing outputs while patching a subset of dates. |
+| `SYNC_MODE` | `webdav` (default, sync from shore over the internet via `lftp`) or `smb` (copy from a locally-mounted SMB share — use while physically on board the Amundsen, on the ship's own network, no internet needed). See "On-board mode (SMB)" below. |
+| `WEBDAV_HOST` / `WEBDAV_USER` / `WEBDAV_PASS` | Amundsen Science WebDAV credentials. Only used when `SYNC_MODE=webdav`. |
+| `SMB_MOUNT_POINT` / `SMB_TSG_SUBPATH` / `SMB_ATS_SUBPATH` / `SMB_PYSAS_SUBPATH` | Local mount point and per-data-type subpaths for `smb://10.0.0.10/data`. Only used when `SYNC_MODE=smb`. See "On-board mode (SMB)" below. |
 | `CRUISE` / `EXPERIMENT` | Used to build ancillary filenames (`<CRUISE>_<EXPERIMENT>_Ancillary_<date>.sb`) and passed through to SeaBASS metadata. |
 | `ROLL_OFFSET` | Static degrees added to raw ROLL in `correct_L1A_files.py::process_roll_offset`, applied unconditionally to every date processed. Currently `-5`. **This needs periodic re-validation** — see "IMU roll bias" below. |
 | `PITCH_OFFSET` | Same mechanism as `ROLL_OFFSET`, but for PITCH (`correct_L1A_files.py::process_pitch_offset`). Added 2026-07-31 after a second physical-disturbance event (2026-07-30, see below) made it clear a single-axis correction isn't enough. Currently `0` (not yet corrected — wiring only, values/reprocessing to be decided per date). |
@@ -65,11 +67,40 @@ conda activate hypercp
 bash MyScripts/download_and_run_hypercp.sh 20260721   # date argument optional; defaults to today
 ```
 
-A single level for a single date (bypasses the WebDAV sync, useful for debugging one
+A single level for a single date (bypasses the data sync, useful for debugging one
 step):
 ```bash
 python MyScripts/run_pySAS006_processing.py --date 20260721 --level L1AQC
 ```
+
+## On-board mode (SMB)
+
+While physically on the Amundsen, data is reachable directly on the ship's network at
+`smb://10.0.0.10/data` instead of over WebDAV from shore. Step 1 of
+`download_and_run_hypercp.sh` supports this as an alternative to the WebDAV sync,
+selected by `SYNC_MODE=smb` in `pipeline_config.env` (default is `webdav`).
+
+1. Mount the share (Finder → Go → Connect to Server → `smb://10.0.0.10/data`, or
+   `mount_smbfs //user@10.0.0.10/data /Volumes/data`).
+2. Set in `pipeline_config.env`:
+   ```
+   SYNC_MODE=smb
+   SMB_MOUNT_POINT=/Volumes/data          # wherever it actually mounted
+   SMB_TSG_SUBPATH=...                    # confirm real subpaths on board
+   SMB_ATS_SUBPATH=...
+   SMB_PYSAS_SUBPATH=...
+   ```
+   The `SMB_*_SUBPATH` defaults mirror the WebDAV server's own `TSG_CDOM/`/`ATS/`/`PySAS/`
+   layout, but the SMB share's actual structure hasn't been confirmed yet (as of
+   2026-08-05) — check it once mounted rather than assuming.
+3. Run as usual (manually or via cron) — everything downstream (Step 2 onward,
+   including the "no RAW data" guard) is identical regardless of `SYNC_MODE`.
+
+`sync_via_smb()` in the script copies with `cp -n` (never overwrites a file already
+present locally), matching the incremental behavior of the WebDAV `lftp mirror -c -n`.
+If `SMB_MOUNT_POINT` isn't actually mounted, it logs an error and returns without
+copying anything — which then hits the "no RAW data" guard below and exits cleanly
+rather than processing garbage.
 
 ## Cron (daily unattended run)
 

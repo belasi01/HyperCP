@@ -48,18 +48,11 @@ mkdir -p "${MAIN_DATA_PATH}/ATS"
 mkdir -p "${MAIN_DATA_PATH}/pySAS/RAW_NoHeaders"
 
 # ------------------------------------------------------------------------------
-# ÉTAPE 1 : TÉLÉCHARGEMENT MIROIR VIA WEBDAV (lftp)
+# ÉTAPE 1 : RÉCUPÉRATION DES DONNÉES (WebDAV depuis terre, ou copie locale SMB à bord)
 # ------------------------------------------------------------------------------
+SYNC_MODE=${SYNC_MODE:-webdav}
 
-if [ "$RUN_WebDAV" = "false" ]; then
-    echo "⏩ [TEST MODE ACTIVE] Step 1 (WebDAV download) has been skipped."
-else
-
-  if [ "${VERBOSE_TERMINAL}" = "false" ]; then
-    LOG_FILE="${LOG_DIR}/pySAS_processing_${DATE_TARGET}.log"
-
-    echo "📝 All terminal outputs for WebDAV (verbose) are being redirected to: ${LOG_FILE}"
-  {
+sync_via_webdav() {
     echo "📡 Connecting to Amundsen WebDAV server and syncing files..."
 
 # Exécution de la commande lftp
@@ -81,29 +74,53 @@ else
     mirror -c -n --ignore-time --parallel=2 --use-pget-n=4 --include=\".*${DATE_TARGET}.*\" PySAS/ ${MAIN_DATA_PATH}/pySAS/RAW_NoHeaders/;
     "
     echo "✅ WebDAV synchronization completed."
+}
+
+sync_via_smb() {
+    echo "📁 Copying from local SMB mount (${SMB_MOUNT_POINT})..."
+
+    if [ ! -d "${SMB_MOUNT_POINT}" ]; then
+        echo "❌ SMB mount point not found at ${SMB_MOUNT_POINT} -- is smb://10.0.0.10/data mounted?"
+        return
+    fi
+
+    mkdir -p "${MAIN_DATA_PATH}/TSG" "${MAIN_DATA_PATH}/ATS" "${MAIN_DATA_PATH}/pySAS/RAW_NoHeaders"
+
+    # cp -n : never overwrite a file already copied locally (equivalent to lftp's -c -n
+    # incremental behavior above, just for a local filesystem instead of a WebDAV mirror).
+    echo "   -> Syncing TSG data..."
+    find "${SMB_MOUNT_POINT}/${SMB_TSG_SUBPATH}" -maxdepth 1 -type f -iname "*convdata_${DATE_TARGET}*" -exec cp -n {} "${MAIN_DATA_PATH}/TSG/" \;
+
+    echo "   -> Syncing ATS data..."
+    find "${SMB_MOUNT_POINT}/${SMB_ATS_SUBPATH}" -maxdepth 1 -type f -iname "*${DATE_TARGET}*" -exec cp -n {} "${MAIN_DATA_PATH}/ATS/" \;
+
+    echo "   -> Syncing pySAS RAW data..."
+    find "${SMB_MOUNT_POINT}/${SMB_PYSAS_SUBPATH}" -type f -iname "*${DATE_TARGET}*" -exec cp -n {} "${MAIN_DATA_PATH}/pySAS/RAW_NoHeaders/" \;
+
+    echo "✅ Local SMB copy completed."
+}
+
+if [ "$RUN_WebDAV" = "false" ]; then
+    echo "⏩ [TEST MODE ACTIVE] Step 1 (data sync, mode=${SYNC_MODE}) has been skipped."
+else
+
+  if [ "${VERBOSE_TERMINAL}" = "false" ]; then
+    LOG_FILE="${LOG_DIR}/pySAS_processing_${DATE_TARGET}.log"
+
+    echo "📝 All terminal outputs for Step 1 sync (verbose) are being redirected to: ${LOG_FILE}"
+  {
+    if [ "${SYNC_MODE}" = "smb" ]; then
+      sync_via_smb
+    else
+      sync_via_webdav
+    fi
   } > "${LOG_FILE}" 2>&1
   else
-    echo "📡 Connecting to Amundsen WebDAV server and syncing files..."
-
-    $LFTP_BIN -c "
-    set ssl:verify-certificate no;
-    set net:timeout 20;
-    set net:max-retries 20;
-    set net:connection-limit 1;
-    set hftp:cache no;
-    set http:use-propfind true;
-    open -u ${WEBDAV_USER},${WEBDAV_PASS} ${WEBDAV_HOST};
-
-    echo '   -> Syncing TSG data (flattening LEGs structural paths)...';
-    mirror --flat -c -n --ignore-time --parallel=2 --use-pget-n=4 --include=\".*convdata_${DATE_TARGET}.*\" TSG_CDOM/ ${MAIN_DATA_PATH}/TSG/;
-
-    echo '   -> Syncing ATS data (flattening LEGs structural paths)...';
-    mirror --flat -c -n --ignore-time --parallel=2 --use-pget-n=4 --include=\".*${DATE_TARGET}.*\" ATS/ ${MAIN_DATA_PATH}/ATS/;
-
-    echo '   -> Syncing pySAS RAW data...';
-    mirror -c -n --ignore-time --parallel=2 --use-pget-n=4 --include=\".*${DATE_TARGET}.*\" PySAS/ ${MAIN_DATA_PATH}/pySAS/RAW_NoHeaders/;
-    "
-    echo "✅ WebDAV synchronization completed."
+    if [ "${SYNC_MODE}" = "smb" ]; then
+      sync_via_smb
+    else
+      sync_via_webdav
+    fi
   fi
 fi
 
