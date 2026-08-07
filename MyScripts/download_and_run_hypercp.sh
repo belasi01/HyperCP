@@ -100,7 +100,7 @@ sync_via_smb() {
     echo "✅ Local SMB copy completed."
 }
 
-if [ "$RUN_WebDAV" = "false" ]; then
+if [ "$RUN_SYNC" = "false" ]; then
     echo "⏩ [TEST MODE ACTIVE] Step 1 (data sync, mode=${SYNC_MODE}) has been skipped."
 else
 

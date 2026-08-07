@@ -42,7 +42,7 @@ For the interactive tool used to browse the L2 results this pipeline produces, s
 
 | Key | Meaning |
 |---|---|
-| `RUN_WebDAV` | `true`/`false`. Skip the Step 1 data sync entirely, regardless of `SYNC_MODE` (e.g. for a local reprocessing test where the raw data is already on disk). Name predates `SYNC_MODE`; kept for backward compatibility. |
+| `RUN_SYNC` | `true`/`false`. Skip the Step 1 data sync entirely, regardless of `SYNC_MODE` (e.g. for a local reprocessing test where the raw data is already on disk). Renamed 2026-08-06 from `RUN_WebDAV`, which predated `SYNC_MODE`/the SMB mode and became misleading once it started gating both sync mechanisms. |
 | `RUN_HCP` | `true`/`false`. Skip the HyperCP processing step entirely (e.g. to only test the data sync). |
 | `VERBOSE_TERMINAL` | `true`: print everything live to the terminal (use for manual/interactive runs). `false`: redirect all output to `<MAIN_DATA_PATH>pySAS/Automated_Pipeline_Log/pySAS_processing_<date>.log` (use for cron). |
 | `CLOBBER` | `true`: `run_pySAS006_processing.py` overwrites existing outputs at every level — needed for a full reprocessing from RAW. `false`: only recomputes files that are missing or previously failed, skips everything already successfully processed. Leave `true` for routine daily cron use (the sync step is already incremental, and Controller-level staleness checks prevent reprocessing untouched files — see `CLAUDE.md`); set to `false` only if you deliberately want to protect existing outputs while patching a subset of dates. |
