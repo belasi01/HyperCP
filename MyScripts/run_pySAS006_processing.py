@@ -78,6 +78,14 @@ parser.add_argument("--version", type=str, default="M99SimSpec",
                          "SKY_MODEL complet (NN + derivation NIR/SimSpec), voir "
                          "download_and_run_hypercp.sh qui appelle ce script avec '<model>NN' "
                          "puis apply_nir_corrections.py --model <model>.")
+parser.add_argument("--roll-offset", type=float, default=None,
+                    help="Surcharge ponctuelle de ROLL_OFFSET (pipeline_config.env) pour cet "
+                         "appel uniquement -- utile pour retraiter seulement une plage horaire "
+                         "d'une date (--time) apres un saut de biais IMU en cours de journee, "
+                         "sans toucher au fichier de config partage.")
+parser.add_argument("--pitch-offset", type=float, default=None,
+                    help="Surcharge ponctuelle de PITCH_OFFSET (pipeline_config.env), meme "
+                         "usage que --roll-offset.")
 
 args = parser.parse_args()
 
@@ -88,6 +96,13 @@ dates = args.date
 PROC_LEVEL = args.level
 L2_VERSION = args.version
 time_str = args.time
+
+if args.roll_offset is not None:
+    print(f"⚠️  ROLL_OFFSET overridden via --roll-offset: {ROLL_OFFSET} -> {args.roll_offset}")
+    ROLL_OFFSET = args.roll_offset
+if args.pitch_offset is not None:
+    print(f"⚠️  PITCH_OFFSET overridden via --pitch-offset: {PITCH_OFFSET} -> {args.pitch_offset}")
+    PITCH_OFFSET = args.pitch_offset
 # #################################
 
 PATH_DATA = os.path.join(MAIN_DATA_PATH, "pySAS")
