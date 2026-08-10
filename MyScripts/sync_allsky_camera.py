@@ -84,10 +84,13 @@ def get_m99nir_cast_times(date_str):
     return sorted(set(times))
 
 
-def find_nearest_camera_image(date_str, dt, tolerance_s=150):
+def find_nearest_camera_image(root_dir, date_str, dt, tolerance_s=150):
     """Cadence ~1 image/minute -- arrondit à la minute la plus proche, avec une petite
-    tolérance (+/- quelques minutes) si l'image exacte manque."""
-    day_dir = os.path.join(CAMERA_SRC_ROOT, date_str)
+    tolérance (+/- quelques minutes) si l'image exacte manque. `root_dir` est soit le
+    montage SMB source (CAMERA_SRC_ROOT, utilisé ici pour la synchro), soit le cache
+    local déjà synchronisé (AS_Camera/, réutilisé par rrs_explorer_app.py pour l'affichage
+    sans dépendre du montage réseau)."""
+    day_dir = os.path.join(root_dir, date_str)
     if not os.path.isdir(day_dir):
         return None
     rounded = dt.replace(second=0, microsecond=0)
@@ -115,7 +118,7 @@ def sync_date(date_str, use_symlink=True):
 
     n_copied, n_missing = 0, 0
     for dt in cast_times:
-        src = find_nearest_camera_image(date_str, dt)
+        src = find_nearest_camera_image(CAMERA_SRC_ROOT, date_str, dt)
         if src is None:
             n_missing += 1
             continue

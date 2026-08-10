@@ -32,6 +32,7 @@ import os
 import sys
 import glob
 import itertools
+import base64
 import h5py
 import numpy as np
 import pandas as pd
@@ -83,6 +84,7 @@ MAIN_DATA_PATH = ENV["MAIN_DATA_PATH"]
 BASE_PATH = os.path.join(MAIN_DATA_PATH, "pySAS")
 ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
 TSG_DIR = os.path.join(MAIN_DATA_PATH, "TSG")
+CAMERA_DIR = os.path.join(BASE_PATH, "AS_Camera")
 
 # dating (Source.utils.dating) sert à convertir Datetag/Timetag2 en datetime pour
 # recaler chaque cast sur l'enregistrement TSG le plus proche (cf. extract_l2_qc_tables.py).
@@ -90,6 +92,12 @@ PATH_HCP = ENV["PATH_HCP"]
 if PATH_HCP not in sys.path:
     sys.path.insert(0, PATH_HCP)
 import Source.utils.dating as dating  # noqa: E402
+
+# Réutilise la logique d'appariement horaire de sync_allsky_camera.py (round à la
+# minute la plus proche, tolérance de quelques minutes) mais sur le cache local
+# AS_Camera/ déjà synchronisé plutôt que sur le montage SMB source -- l'app fonctionne
+# donc sans dépendre du réseau du bateau, tant que sync_allsky_camera.py a déjà tourné.
+from sync_allsky_camera import find_nearest_camera_image  # noqa: E402
 
 # Cache mémoire par date : {date_str: {"df_casts": ..., "wavelengths": ..., "cube": ...}}
 # cube shape = (n_casts, n_wavelengths, n_methods), NaN si un cast est absent d'une méthode.
@@ -377,6 +385,21 @@ def find_cast_index(df_casts, filename, timetag2):
     return int(matches[0]) if len(matches) else None
 
 
+def get_camera_image(date_str, datetag, timetag2):
+    """Image all-sky la plus proche (cache local AS_Camera/, déjà peuplé par
+    sync_allsky_camera.py) pour ce cast, encodée en data URI base64 -- pas de route
+    Flask/assets supplémentaire nécessaire pour l'afficher via html.Img.
+    Retourne (src, caption) ou (None, message) si aucune image n'est disponible."""
+    dt = dating.timeTag2ToDateTime(dating.dateTagToDateTime(int(datetag)), int(timetag2))
+    image_path = find_nearest_camera_image(CAMERA_DIR, date_str, dt)
+    if image_path is None:
+        return None, "Pas d'image caméra pour ce cast (non synchronisée ou hors couverture)."
+    with open(image_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    caption = f"Caméra all-sky : {os.path.basename(image_path)}"
+    return f"data:image/jpeg;base64,{encoded}", caption
+
+
 # Seuils Dierssen et al. (FRM4SOC) : QWIP < 0.05 valide, 0.05-0.1 douteux, >= 0.1
 # probablement invalide pour un milieu optiquement profond.
 def qwip_line_style(qwip):
@@ -602,6 +625,10 @@ app.layout = html.Div([
         html.Div(dcc.Graph(id="spectra-graph", figure=build_empty_spectra_figure()),
                  style={"width": "48%", "display": "inline-block", "float": "right"}),
     ]),
+    html.Div([
+        html.Img(id="camera-image", style={"maxWidth": "400px", "display": "block", "margin": "0 auto"}),
+        html.P(id="camera-caption", style={"textAlign": "center", "color": "#666", "fontSize": 13}),
+    ], style={"marginTop": "10px"}),
     html.Hr(),
     html.H3("Spectres comparés entre points sélectionnés (une méthode)"),
     html.Div([
@@ -701,19 +728,23 @@ def update_map(date_strs, color_choice, qwip_method):
 
 @app.callback(
     Output("spectra-graph", "figure"),
+    Output("camera-image", "src"),
+    Output("camera-caption", "children"),
     Input("map-graph", "clickData"),
     State("date-dropdown", "value"),
 )
 def update_spectra(click_data, date_strs):
     if click_data is None or not date_strs:
-        return build_empty_spectra_figure()
+        return build_empty_spectra_figure(), None, ""
     point = click_data["points"][0]
     filename, timetag2 = point["customdata"]
     day = get_combined_day_data(date_strs)
     idx = find_cast_index(day["df_casts"], filename, int(timetag2))
     if idx is None:
-        return build_empty_spectra_figure()
-    return build_spectra_figure(day, idx)
+        return build_empty_spectra_figure(), None, ""
+    row = day["df_casts"].iloc[idx]
+    image_src, caption = get_camera_image(row["Date"], row["Datetag"], row["Timetag2"])
+    return build_spectra_figure(day, idx), image_src, caption
 
 
 @app.callback(

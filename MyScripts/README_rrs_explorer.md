@@ -105,6 +105,13 @@ nothing is re-read from disk.
     QWIP): more opaque = better agreement with the 23 reference water-type spectral
     shapes, more transparent = worse.
   - Exact QWIP/WEI values are in the legend for each method.
+  - Below the spectra panel, an **all-sky camera image** is shown for the clicked cast
+    if one is available (nearest-minute match, from `pySAS/AS_Camera/<date>/`). That
+    folder is populated separately by `sync_allsky_camera.py` -- it is not synced
+    automatically, so casts on dates that script hasn't been run for (or where the
+    all-sky camera archive has gaps, e.g. most of Leg 1) will show "Pas d'image caméra"
+    instead. No extra setup needed here: the image is read straight off disk and
+    inlined as a base64 data URI, no Flask route or network access required.
 - **Lasso or box select** (icons in the map's toolbar) a group of points instead: this
   drives both the "Spectres comparés" and "Intercomparaison" sections below. The zoom
   icon in the same toolbar switches back out of selection mode. Mouse-wheel zoom also
