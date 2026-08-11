@@ -38,20 +38,21 @@ CAMERA360_SRC_ROOT = os.path.join(SMB_MOUNT_POINT, SMB_360_SUBPATH)
 DEST_ROOT = os.path.join(PYSAS_PATH, "Mosaic360")
 
 
-def find_nearest_mosaic(root_dir, date_str, dt, tolerance_s=180):
-    """Cadence ~2 min et irrégulière (pas de nom de fichier prévisible comme pour
-    l'all-sky) -- cherche le plus proche de `dt` dans la tolérance, et prend le plus
-    proche. `root_dir` est soit le montage SMB source (structure imbriquée
+def _index_mosaics(root_dir, date_str):
+    """Liste le dossier du jour UNE SEULE fois et retourne [(datetime, chemin), ...].
+    `root_dir` est soit le montage SMB source (structure imbriquée
     <HHMMSS>/Camera360_..._mosaic.jpg), soit le cache local Mosaic360/ déjà synchronisé
     par sync_date() ci-dessous (fichiers plats Camera360_<date><HHMMSS>_mosaic.jpg,
     réutilisé pour l'affichage dans rrs_explorer_app.py) -- les deux structures sont
-    gérées ici pour que cette fonction serve aux deux usages."""
+    gérées ici. Séparé de find_nearest_mosaic() pour que sync_date() puisse construire
+    l'index une seule fois par date plutôt qu'une fois par cast (un dossier journalier
+    peut contenir des centaines d'entrées, coûteux à relister sur un montage SMB)."""
     day_dir = os.path.join(root_dir, date_str)
     if not os.path.isdir(day_dir):
-        return None
+        return []
 
     flat_pattern = re.compile(rf"Camera360_{date_str}(\d{{6}})_mosaic\.jpg$")
-    best_path, best_diff = None, None
+    index = []
     for entry in os.listdir(day_dir):
         entry_path = os.path.join(day_dir, entry)
         if os.path.isdir(entry_path) and re.fullmatch(r"\d{6}", entry):
@@ -67,12 +68,29 @@ def find_nearest_mosaic(root_dir, date_str, dt, tolerance_s=180):
         if not mosaic_matches:
             continue
         entry_dt = datetime.strptime(f"{date_str}{time_str}", "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        index.append((entry_dt, mosaic_matches[0]))
+    return index
+
+
+def _nearest_in_index(index, dt, tolerance_s):
+    best_path, best_diff = None, None
+    for entry_dt, path in index:
         diff = abs((entry_dt - dt).total_seconds())
         if diff > tolerance_s:
             continue
         if best_diff is None or diff < best_diff:
-            best_path, best_diff = mosaic_matches[0], diff
+            best_path, best_diff = path, diff
     return best_path
+
+
+def find_nearest_mosaic(root_dir, date_str, dt, tolerance_s=180):
+    """Cadence ~2 min et irrégulière (pas de nom de fichier prévisible comme pour
+    l'all-sky) -- cherche la mosaïque la plus proche de `dt` dans la tolérance.
+    Pratique pour un lookup ponctuel (ex: rrs_explorer_app.py sur clic d'un cast) ;
+    pour synchroniser une journée entière (beaucoup de casts), sync_date() construit
+    l'index une seule fois via _index_mosaics() plutôt que d'appeler cette fonction en
+    boucle."""
+    return _nearest_in_index(_index_mosaics(root_dir, date_str), dt, tolerance_s)
 
 
 def sync_date(date_str, use_symlink=True):
@@ -81,12 +99,17 @@ def sync_date(date_str, use_symlink=True):
         print(f"⚠️  Aucun cast M99NIR L2 trouvé pour {date_str}.")
         return
 
+    index = _index_mosaics(CAMERA360_SRC_ROOT, date_str)
+    if not index:
+        print(f"⚠️  Aucune mosaïque 360 disponible pour {date_str} (dossier absent ou vide sur le montage source).")
+        return
+
     dest_dir = os.path.join(DEST_ROOT, date_str)
     os.makedirs(dest_dir, exist_ok=True)
 
     n_copied, n_missing = 0, 0
     for dt in cast_times:
-        src = find_nearest_mosaic(CAMERA360_SRC_ROOT, date_str, dt)
+        src = _nearest_in_index(index, dt, tolerance_s=180)
         if src is None:
             n_missing += 1
             continue
