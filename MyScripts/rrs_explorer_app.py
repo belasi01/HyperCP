@@ -32,13 +32,14 @@ import os
 import sys
 import glob
 import itertools
-import base64
+from urllib.parse import quote
 import h5py
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.colors
 from dash import Dash, dcc, html, dash_table, Input, Output, State
+from flask import abort, send_file
 from generate_ancillary_file import read_tsg
 
 # NIR/SimSpec offsets are not relevant on top of 3C (decided 2026-07-17) -- only 3CNN
@@ -85,6 +86,7 @@ BASE_PATH = os.path.join(MAIN_DATA_PATH, "pySAS")
 ANALYSIS_DIR = os.path.join(BASE_PATH, "AnalysisComparison")
 TSG_DIR = os.path.join(MAIN_DATA_PATH, "TSG")
 CAMERA_DIR = os.path.join(BASE_PATH, "AS_Camera")
+MOSAIC_DIR = os.path.join(BASE_PATH, "Mosaic360")
 
 # dating (Source.utils.dating) sert à convertir Datetag/Timetag2 en datetime pour
 # recaler chaque cast sur l'enregistrement TSG le plus proche (cf. extract_l2_qc_tables.py).
@@ -93,11 +95,13 @@ if PATH_HCP not in sys.path:
     sys.path.insert(0, PATH_HCP)
 import Source.utils.dating as dating  # noqa: E402
 
-# Réutilise la logique d'appariement horaire de sync_allsky_camera.py (round à la
-# minute la plus proche, tolérance de quelques minutes) mais sur le cache local
-# AS_Camera/ déjà synchronisé plutôt que sur le montage SMB source -- l'app fonctionne
-# donc sans dépendre du réseau du bateau, tant que sync_allsky_camera.py a déjà tourné.
+# Réutilise la logique d'appariement horaire de sync_allsky_camera.py/sync_360_camera.py
+# (recherche du fichier/dossier le plus proche dans une tolérance) mais sur les caches
+# locaux AS_Camera/ et Mosaic360/ déjà synchronisés plutôt que sur les montages SMB
+# source -- l'app fonctionne donc sans dépendre du réseau du bateau, tant que les deux
+# scripts de synchro ont déjà tourné pour les dates consultées.
 from sync_allsky_camera import find_nearest_camera_image  # noqa: E402
+from sync_360_camera import find_nearest_mosaic  # noqa: E402
 
 # Cache mémoire par date : {date_str: {"df_casts": ..., "wavelengths": ..., "cube": ...}}
 # cube shape = (n_casts, n_wavelengths, n_methods), NaN si un cast est absent d'une méthode.
@@ -385,19 +389,37 @@ def find_cast_index(df_casts, filename, timetag2):
     return int(matches[0]) if len(matches) else None
 
 
+def _media_url(image_path):
+    """URL relative servie par la route Flask /media/<path> (cf. plus bas) -- utilisé
+    plutôt qu'un data URI base64 pour ne pas gonfler la charge utile des callbacks Dash
+    avec des mosaïques 360 de plusieurs Mo (le navigateur télécharge/cache l'image
+    directement via une requête GET normale)."""
+    relpath = os.path.relpath(image_path, BASE_PATH)
+    return "/media/" + quote(relpath)
+
+
 def get_camera_image(date_str, datetag, timetag2):
     """Image all-sky la plus proche (cache local AS_Camera/, déjà peuplé par
-    sync_allsky_camera.py) pour ce cast, encodée en data URI base64 -- pas de route
-    Flask/assets supplémentaire nécessaire pour l'afficher via html.Img.
-    Retourne (src, caption) ou (None, message) si aucune image n'est disponible."""
+    sync_allsky_camera.py) pour ce cast. Retourne (url, caption) ou (None, message) si
+    aucune image n'est disponible."""
     dt = dating.timeTag2ToDateTime(dating.dateTagToDateTime(int(datetag)), int(timetag2))
     image_path = find_nearest_camera_image(CAMERA_DIR, date_str, dt)
     if image_path is None:
         return None, "Pas d'image caméra pour ce cast (non synchronisée ou hors couverture)."
-    with open(image_path, "rb") as f:
-        encoded = base64.b64encode(f.read()).decode("ascii")
     caption = f"Caméra all-sky : {os.path.basename(image_path)}"
-    return f"data:image/jpeg;base64,{encoded}", caption
+    return _media_url(image_path), caption
+
+
+def get_mosaic_image(date_str, datetag, timetag2):
+    """Mosaïque 360 la plus proche (cache local Mosaic360/, déjà peuplé par
+    sync_360_camera.py) pour ce cast. Retourne (url, caption) ou (None, message) si
+    aucune mosaïque n'est disponible."""
+    dt = dating.timeTag2ToDateTime(dating.dateTagToDateTime(int(datetag)), int(timetag2))
+    image_path = find_nearest_mosaic(MOSAIC_DIR, date_str, dt)
+    if image_path is None:
+        return None, "Pas de mosaïque 360 pour ce cast (non synchronisée ou hors couverture)."
+    caption = f"Mosaïque 360 : {os.path.basename(image_path)}"
+    return _media_url(image_path), caption
 
 
 # Seuils Dierssen et al. (FRM4SOC) : QWIP < 0.05 valide, 0.05-0.1 douteux, >= 0.1
@@ -578,6 +600,18 @@ def build_selected_spectra_figure(day, idx, method, color_values, color_label="H
 app = Dash(__name__)
 app.title = "Rrs Explorer - pySAS"
 
+
+@app.server.route("/media/<path:relpath>")
+def serve_media(relpath):
+    """Sert directement les images (AS_Camera/, Mosaic360/) depuis le disque, sans
+    passer par un callback Dash -- nécessaire pour les mosaïques 360 (plusieurs Mo)."""
+    full_path = os.path.normpath(os.path.join(BASE_PATH, relpath))
+    if not (full_path == os.path.normpath(BASE_PATH) or full_path.startswith(os.path.normpath(BASE_PATH) + os.sep)):
+        abort(403)
+    if not os.path.isfile(full_path):
+        abort(404)
+    return send_file(full_path)
+
 dates = available_dates()
 default_date = dates[-1] if dates else None
 _default_day = get_day_data(default_date) if default_date else None
@@ -620,15 +654,17 @@ app.layout = html.Div([
         ], id="qwip-method-container", style={"display": "none"}),
     ], style={"marginBottom": "20px"}),
     html.Div([
-        html.Div(dcc.Graph(id="map-graph", config={"scrollZoom": True}),
-                 style={"width": "48%", "display": "inline-block"}),
-        html.Div(dcc.Graph(id="spectra-graph", figure=build_empty_spectra_figure()),
-                 style={"width": "48%", "display": "inline-block", "float": "right"}),
+        html.Div([
+            dcc.Graph(id="map-graph", config={"scrollZoom": True}),
+            html.Img(id="camera-image", style={"maxWidth": "400px", "display": "block", "margin": "10px auto 0"}),
+            html.P(id="camera-caption", style={"textAlign": "center", "color": "#666", "fontSize": 13}),
+        ], style={"width": "48%", "display": "inline-block", "verticalAlign": "top"}),
+        html.Div([
+            dcc.Graph(id="spectra-graph", figure=build_empty_spectra_figure()),
+            html.Img(id="mosaic-image", style={"maxWidth": "100%", "display": "block", "margin": "10px auto 0"}),
+            html.P(id="mosaic-caption", style={"textAlign": "center", "color": "#666", "fontSize": 13}),
+        ], style={"width": "48%", "display": "inline-block", "float": "right", "verticalAlign": "top"}),
     ]),
-    html.Div([
-        html.Img(id="camera-image", style={"maxWidth": "400px", "display": "block", "margin": "0 auto"}),
-        html.P(id="camera-caption", style={"textAlign": "center", "color": "#666", "fontSize": 13}),
-    ], style={"marginTop": "10px"}),
     html.Hr(),
     html.H3("Spectres comparés entre points sélectionnés (une méthode)"),
     html.Div([
@@ -730,21 +766,24 @@ def update_map(date_strs, color_choice, qwip_method):
     Output("spectra-graph", "figure"),
     Output("camera-image", "src"),
     Output("camera-caption", "children"),
+    Output("mosaic-image", "src"),
+    Output("mosaic-caption", "children"),
     Input("map-graph", "clickData"),
     State("date-dropdown", "value"),
 )
 def update_spectra(click_data, date_strs):
     if click_data is None or not date_strs:
-        return build_empty_spectra_figure(), None, ""
+        return build_empty_spectra_figure(), None, "", None, ""
     point = click_data["points"][0]
     filename, timetag2 = point["customdata"]
     day = get_combined_day_data(date_strs)
     idx = find_cast_index(day["df_casts"], filename, int(timetag2))
     if idx is None:
-        return build_empty_spectra_figure(), None, ""
+        return build_empty_spectra_figure(), None, "", None, ""
     row = day["df_casts"].iloc[idx]
-    image_src, caption = get_camera_image(row["Date"], row["Datetag"], row["Timetag2"])
-    return build_spectra_figure(day, idx), image_src, caption
+    camera_src, camera_caption = get_camera_image(row["Date"], row["Datetag"], row["Timetag2"])
+    mosaic_src, mosaic_caption = get_mosaic_image(row["Date"], row["Datetag"], row["Timetag2"])
+    return build_spectra_figure(day, idx), camera_src, camera_caption, mosaic_src, mosaic_caption
 
 
 @app.callback(
