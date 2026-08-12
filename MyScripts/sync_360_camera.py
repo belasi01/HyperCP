@@ -33,22 +33,38 @@ if MY_DIR not in sys.path:
 # all-sky -- même définition de "ensemble valide" pour les deux archives caméra.
 from sync_allsky_camera import ENV, PYSAS_PATH, SMB_MOUNT_POINT, get_m99nir_cast_times, available_m99nir_dates  # noqa: E402
 
-SMB_360_SUBPATH = ENV.get("SMB_360_SUBPATH", "360")
+SMB_360_SUBPATH = ENV.get("SMB_360_SUBPATH", "Camera_360")
 CAMERA360_SRC_ROOT = os.path.join(SMB_MOUNT_POINT, SMB_360_SUBPATH)
 DEST_ROOT = os.path.join(PYSAS_PATH, "Mosaic360")
+
+
+def _find_day_dir(root_dir, date_str):
+    """Le dossier du jour peut être directement sous `root_dir` (cache local
+    Mosaic360/<date>/, plat) ou sous un sous-dossier de leg (montage SMB source :
+    <root_dir>/<leg>/<date>/, ex. Camera_360/2026_LEG_01/ vs .../2026_LEG_02/ -- le
+    partage a été réorganisé par leg en cours de campagne, 2026-08-12). On ne suppose
+    pas quel leg contient quelle date : on cherche dans les deux formes."""
+    direct = os.path.join(root_dir, date_str)
+    if os.path.isdir(direct):
+        return direct
+    for candidate in glob.glob(os.path.join(root_dir, "*", date_str)):
+        if os.path.isdir(candidate):
+            return candidate
+    return None
 
 
 def _index_mosaics(root_dir, date_str):
     """Liste le dossier du jour UNE SEULE fois et retourne [(datetime, chemin), ...].
     `root_dir` est soit le montage SMB source (structure imbriquée
-    <HHMMSS>/Camera360_..._mosaic.jpg), soit le cache local Mosaic360/ déjà synchronisé
-    par sync_date() ci-dessous (fichiers plats Camera360_<date><HHMMSS>_mosaic.jpg,
-    réutilisé pour l'affichage dans rrs_explorer_app.py) -- les deux structures sont
-    gérées ici. Séparé de find_nearest_mosaic() pour que sync_date() puisse construire
-    l'index une seule fois par date plutôt qu'une fois par cast (un dossier journalier
-    peut contenir des centaines d'entrées, coûteux à relister sur un montage SMB)."""
-    day_dir = os.path.join(root_dir, date_str)
-    if not os.path.isdir(day_dir):
+    <leg>/<date>/<HHMMSS>/Camera360_..._mosaic.jpg), soit le cache local Mosaic360/
+    déjà synchronisé par sync_date() ci-dessous (fichiers plats
+    Camera360_<date><HHMMSS>_mosaic.jpg, réutilisé pour l'affichage dans
+    rrs_explorer_app.py) -- les deux structures sont gérées ici. Séparé de
+    find_nearest_mosaic() pour que sync_date() puisse construire l'index une seule fois
+    par date plutôt qu'une fois par cast (un dossier journalier peut contenir des
+    centaines d'entrées, coûteux à relister sur un montage SMB)."""
+    day_dir = _find_day_dir(root_dir, date_str)
+    if day_dir is None:
         return []
 
     flat_pattern = re.compile(rf"Camera360_{date_str}(\d{{6}})_mosaic\.jpg$")

@@ -56,7 +56,7 @@ ENV = load_pipeline_config(os.path.join(MY_DIR, "pipeline_config.env"))
 MAIN_DATA_PATH = ENV["MAIN_DATA_PATH"]
 PYSAS_PATH = os.path.join(MAIN_DATA_PATH, "pySAS")
 SMB_MOUNT_POINT = ENV.get("SMB_MOUNT_POINT", "/Volumes/data")
-SMB_CAMERA_SUBPATH = ENV.get("SMB_CAMERA_SUBPATH", "Cam_Allsky/asi_16335")
+SMB_CAMERA_SUBPATH = ENV.get("SMB_CAMERA_SUBPATH", "Camera_All_Sky/2026")
 CAMERA_SRC_ROOT = os.path.join(SMB_MOUNT_POINT, SMB_CAMERA_SUBPATH)
 DEST_ROOT = os.path.join(PYSAS_PATH, "AS_Camera")
 
@@ -84,14 +84,30 @@ def get_m99nir_cast_times(date_str):
     return sorted(set(times))
 
 
+def _find_day_dir(root_dir, date_str):
+    """Le dossier du jour peut être directement sous `root_dir` (cache local
+    AS_Camera/<date>/, plat) ou sous <root_dir>/<leg>/asi_16335/<date>/ (montage SMB
+    source -- le partage a été réorganisé par leg en cours de campagne, 2026-08-12,
+    et une date peut se trouver sous n'importe quel leg, ex. Camera_360 a un
+    2026_LEG_01 en plus du 2026_LEG_02 attendu). On ne suppose pas lequel : on cherche
+    dans les deux formes."""
+    direct = os.path.join(root_dir, date_str)
+    if os.path.isdir(direct):
+        return direct
+    for candidate in glob.glob(os.path.join(root_dir, "*", "asi_16335", date_str)):
+        if os.path.isdir(candidate):
+            return candidate
+    return None
+
+
 def find_nearest_camera_image(root_dir, date_str, dt, tolerance_s=150):
     """Cadence ~1 image/minute -- arrondit à la minute la plus proche, avec une petite
     tolérance (+/- quelques minutes) si l'image exacte manque. `root_dir` est soit le
     montage SMB source (CAMERA_SRC_ROOT, utilisé ici pour la synchro), soit le cache
     local déjà synchronisé (AS_Camera/, réutilisé par rrs_explorer_app.py pour l'affichage
     sans dépendre du montage réseau)."""
-    day_dir = os.path.join(root_dir, date_str)
-    if not os.path.isdir(day_dir):
+    day_dir = _find_day_dir(root_dir, date_str)
+    if day_dir is None:
         return None
     rounded = dt.replace(second=0, microsecond=0)
     if dt.second >= 30:
