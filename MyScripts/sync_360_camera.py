@@ -114,7 +114,11 @@ def sync_date(date_str, use_symlink=True):
             n_missing += 1
             continue
         dst = os.path.join(dest_dir, os.path.basename(src))
-        if os.path.exists(dst) or os.path.islink(dst):
+        if os.path.islink(dst) and not os.path.exists(dst):
+            # Lien orphelin -- la source a été déplacée/renommée depuis (ex: réorg du
+            # partage SMB), le recréer plutôt que le garder cassé indéfiniment.
+            os.unlink(dst)
+        if os.path.exists(dst):
             continue
         if use_symlink:
             try:
