@@ -604,13 +604,18 @@ app.title = "Rrs Explorer - pySAS"
 @app.server.route("/media/<path:relpath>")
 def serve_media(relpath):
     """Sert directement les images (AS_Camera/, Mosaic360/) depuis le disque, sans
-    passer par un callback Dash -- nécessaire pour les mosaïques 360 (plusieurs Mo)."""
+    passer par un callback Dash -- nécessaire pour les mosaïques 360 (plusieurs Mo).
+    Mise en cache désactivée : les fichiers synchronisés peuvent être réparés/recopiés
+    après coup (liens cassés, ré-appariement) sans changer d'URL, donc un navigateur qui
+    aurait mis l'ancienne version en cache ne doit pas continuer à la servir."""
     full_path = os.path.normpath(os.path.join(BASE_PATH, relpath))
     if not (full_path == os.path.normpath(BASE_PATH) or full_path.startswith(os.path.normpath(BASE_PATH) + os.sep)):
         abort(403)
     if not os.path.isfile(full_path):
         abort(404)
-    return send_file(full_path)
+    response = send_file(full_path)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 dates = available_dates()
 default_date = dates[-1] if dates else None
