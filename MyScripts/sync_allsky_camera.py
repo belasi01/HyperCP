@@ -10,19 +10,19 @@ Pour chaque date :
    (cadence ~1 image/minute : <SMB_MOUNT_POINT>/<SMB_CAMERA_SUBPATH>/<YYYYMMDD>/
    <YYYYMMDDHHMMSS>_*.jpg), avec une tolérance de quelques minutes si l'image exacte
    manque (trous possibles dans l'archive caméra).
-3. Copie (ou lie symboliquement) l'image trouvée dans
-   <MAIN_DATA_PATH>/pySAS/AS_Camera/<YYYYMMDD>/.
+3. Copie (par défaut -- ou lie symboliquement avec --symlink) l'image trouvée dans
+   <MAIN_DATA_PATH>/pySAS/AS_Camera/<YYYYMMDD>/. Copie réelle par défaut : une fois la
+   campagne terminée, le montage SMB du navire ne sera plus accessible, donc un lien
+   symbolique deviendrait inutilisable.
 
-Étape suivante (pas encore faite) : lier ces images aux points de mesure L2, par ex.
-un champ "photo_url" dans le GeoJSON (pySAS_L2_Track_QC_<date>.geojson) pour un clic
-QGIS, ou un affichage directement dans rrs_explorer_app.py.
+Affiché dans rrs_explorer_app.py (image + mosaïque 360 sur clic d'un cast).
 
 Usage :
     conda activate hypercp
     python sync_allsky_camera.py --date 20260808
     python sync_allsky_camera.py --date 20260808 --date 20260809
     python sync_allsky_camera.py --all             # toutes les dates avec sortie M99NIR L2
-    python sync_allsky_camera.py --date 20260808 --copy   # copie réelle plutôt qu'un lien
+    python sync_allsky_camera.py --date 20260808 --symlink   # lien au lieu d'une copie
 """
 import os
 import sys
@@ -123,7 +123,7 @@ def find_nearest_camera_image(root_dir, date_str, dt, tolerance_s=150):
     return None
 
 
-def sync_date(date_str, use_symlink=True):
+def sync_date(date_str, use_symlink=False):
     cast_times = get_m99nir_cast_times(date_str)
     if not cast_times:
         print(f"⚠️  Aucun cast M99NIR L2 trouvé pour {date_str}.")
@@ -132,7 +132,7 @@ def sync_date(date_str, use_symlink=True):
     dest_dir = os.path.join(DEST_ROOT, date_str)
     os.makedirs(dest_dir, exist_ok=True)
 
-    n_copied, n_missing = 0, 0
+    n_copied, n_already, n_missing = 0, 0, 0
     for dt in cast_times:
         src = find_nearest_camera_image(CAMERA_SRC_ROOT, date_str, dt)
         if src is None:
@@ -144,19 +144,21 @@ def sync_date(date_str, use_symlink=True):
             # partage SMB), le recréer plutôt que le garder cassé indéfiniment.
             os.unlink(dst)
         if os.path.exists(dst):
+            n_already += 1
             continue
         if use_symlink:
             try:
                 os.symlink(src, dst)
             except OSError:
-                shutil.copy2(src, dst)
+                shutil.copyfile(src, dst)
         else:
-            shutil.copy2(src, dst)
+            shutil.copyfile(src, dst)
         n_copied += 1
 
     verb = "liée(s)" if use_symlink else "copiée(s)"
-    print(f"📷 {date_str}: {n_copied} image(s) {verb}, "
-          f"{n_missing}/{len(cast_times)} cast(s) sans image correspondante -> {dest_dir}")
+    print(f"📷 {date_str}: {n_copied} image(s) nouvellement {verb} "
+          f"({n_already} déjà synchronisée(s), {n_missing}/{len(cast_times)} cast(s) "
+          f"sans image correspondante) -> {dest_dir}")
 
 
 def available_m99nir_dates():
@@ -173,7 +175,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--date", action="append", default=[], help="Date AAAAMMJJ (répétable)")
     parser.add_argument("--all", action="store_true", help="Toutes les dates avec sortie M99NIR L2")
-    parser.add_argument("--copy", action="store_true", help="Copier au lieu de lier symboliquement")
+    parser.add_argument("--symlink", action="store_true",
+                         help="Lier symboliquement au lieu de copier (économise l'espace disque, mais "
+                              "les liens deviennent inutilisables sans accès au montage SMB -- ex. après "
+                              "la fin de la campagne. Copie réelle par défaut.)")
     args = parser.parse_args()
 
     dates = available_m99nir_dates() if args.all else args.date
@@ -185,4 +190,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     for date_str in dates:
-        sync_date(date_str, use_symlink=not args.copy)
+        sync_date(date_str, use_symlink=args.symlink)

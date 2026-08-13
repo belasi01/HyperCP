@@ -8,14 +8,16 @@ Structure source (cadence ~2 min, irrégulière) :
     (chaque dossier HHMMSS contient aussi cam_1/2/3.jpg bruts et un header.txt --
     seule la mosaïque déjà assemblée est récupérée ici)
 
-Copie (ou lien symbolique) vers :
+Copie (par défaut -- ou lien symbolique avec --symlink) vers :
     <MAIN_DATA_PATH>/pySAS/Mosaic360/<YYYYMMDD>/Camera360_<YYYYMMDD><HHMMSS>_mosaic.jpg
+Copie réelle par défaut : une fois la campagne terminée, le montage SMB du navire ne
+sera plus accessible, donc un lien symbolique deviendrait inutilisable.
 
 Usage :
     conda activate hypercp
     python sync_360_camera.py --date 20260808
     python sync_360_camera.py --all
-    python sync_360_camera.py --date 20260808 --copy
+    python sync_360_camera.py --date 20260808 --symlink
 """
 import os
 import sys
@@ -109,7 +111,7 @@ def find_nearest_mosaic(root_dir, date_str, dt, tolerance_s=180):
     return _nearest_in_index(_index_mosaics(root_dir, date_str), dt, tolerance_s)
 
 
-def sync_date(date_str, use_symlink=True):
+def sync_date(date_str, use_symlink=False):
     cast_times = get_m99nir_cast_times(date_str)
     if not cast_times:
         print(f"⚠️  Aucun cast M99NIR L2 trouvé pour {date_str}.")
@@ -123,7 +125,7 @@ def sync_date(date_str, use_symlink=True):
     dest_dir = os.path.join(DEST_ROOT, date_str)
     os.makedirs(dest_dir, exist_ok=True)
 
-    n_copied, n_missing = 0, 0
+    n_copied, n_already, n_missing = 0, 0, 0
     for dt in cast_times:
         src = _nearest_in_index(index, dt, tolerance_s=180)
         if src is None:
@@ -135,26 +137,31 @@ def sync_date(date_str, use_symlink=True):
             # partage SMB), le recréer plutôt que le garder cassé indéfiniment.
             os.unlink(dst)
         if os.path.exists(dst):
+            n_already += 1
             continue
         if use_symlink:
             try:
                 os.symlink(src, dst)
             except OSError:
-                shutil.copy2(src, dst)
+                shutil.copyfile(src, dst)
         else:
-            shutil.copy2(src, dst)
+            shutil.copyfile(src, dst)
         n_copied += 1
 
     verb = "liée(s)" if use_symlink else "copiée(s)"
-    print(f"🌐 {date_str}: {n_copied} mosaïque(s) {verb}, "
-          f"{n_missing}/{len(cast_times)} cast(s) sans mosaïque correspondante -> {dest_dir}")
+    print(f"🌐 {date_str}: {n_copied} mosaïque(s) nouvellement {verb} "
+          f"({n_already} déjà synchronisée(s), {n_missing}/{len(cast_times)} cast(s) "
+          f"sans mosaïque correspondante) -> {dest_dir}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--date", action="append", default=[], help="Date AAAAMMJJ (répétable)")
     parser.add_argument("--all", action="store_true", help="Toutes les dates avec sortie M99NIR L2")
-    parser.add_argument("--copy", action="store_true", help="Copier au lieu de lier symboliquement")
+    parser.add_argument("--symlink", action="store_true",
+                         help="Lier symboliquement au lieu de copier (économise l'espace disque, mais "
+                              "les liens deviennent inutilisables sans accès au montage SMB -- ex. après "
+                              "la fin de la campagne. Copie réelle par défaut.)")
     args = parser.parse_args()
 
     dates = available_m99nir_dates() if args.all else args.date
@@ -166,4 +173,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     for date_str in dates:
-        sync_date(date_str, use_symlink=not args.copy)
+        sync_date(date_str, use_symlink=args.symlink)
