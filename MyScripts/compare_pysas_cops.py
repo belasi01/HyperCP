@@ -10,9 +10,11 @@ COPS casts for that station), this:
    UTC time window the COPS casts covered.
 2. Finds the pySAS L2 casts (from all 7 methods) whose timestamp falls in that window,
    using the day's L2_Methods_Quotes_<date>.csv (same source as rrs_explorer_app.py).
-3. Copies (or symlinks) the corresponding pySAS L2 HDF5 files into a new
-   .../L2/YYYYMMDD_StationID/pySAS/<method>/ subfolder, alongside the other
-   instruments' data for that station.
+3. Copies (real copies by default -- see --symlink) the corresponding pySAS L2 HDF5
+   files into a new .../L2/YYYYMMDD_StationID/pySAS/<method>/ subfolder, alongside the
+   other instruments' data for that station. Also copies any all-sky image / 360
+   mosaic whose timestamp falls in the same window, into AS_Camera/ and Mosaic360/
+   subfolders next to it (see copy_camera_photos()).
 4. Produces a comparison figure (Rrs vs wavelength, COPS + all 7 pySAS methods),
    a scatterplot (pySAS vs COPS per method, resampled onto COPS's wavelength grid),
    and a stats table (bias/RMSD/R² per method vs COPS) -- all saved under that
@@ -21,7 +23,7 @@ COPS casts for that station), this:
 Usage:
     conda activate hypercp
     python compare_pysas_cops.py /path/to/Amundsen_2026/L2/20260808_StationCS1-1/
-    python compare_pysas_cops.py <station_path> --copy   # real copies instead of symlinks
+    python compare_pysas_cops.py <station_path> --symlink   # links instead of real copies
 """
 import os
 import sys
@@ -137,7 +139,24 @@ def find_pysas_casts_in_window(date_str, window_start, window_end):
     return df_casts[mask].drop(columns=["_dt"]).reset_index(drop=True)
 
 
-def copy_pysas_files(df_window, station_path, use_symlink=True):
+def _copy_or_link(src, dst, use_symlink):
+    """copyfile() plutôt que copy2() : copy2 essaie de préserver les xattrs (ex.
+    com.apple.provenance sur macOS), ce que l'OS refuse pour un script -- lève
+    "Operation not permitted" après que le contenu ait déjà été copié correctement."""
+    if os.path.exists(dst) or os.path.islink(dst):
+        return False
+    if use_symlink:
+        try:
+            os.symlink(src, dst)
+        except OSError:
+            # e.g. CIFS/network share without symlink support
+            shutil.copyfile(src, dst)
+    else:
+        shutil.copyfile(src, dst)
+    return True
+
+
+def copy_pysas_files(df_window, station_path, use_symlink=False):
     dest_root = os.path.join(station_path, "pySAS")
     for method in rea.METHODS:
         method_dest = os.path.join(dest_root, method)
@@ -146,18 +165,51 @@ def copy_pysas_files(df_window, station_path, use_symlink=True):
             src = os.path.join(rea.BASE_PATH, method, "L2", fname)
             if not os.path.exists(src):
                 continue
-            dst = os.path.join(method_dest, fname)
-            if os.path.exists(dst) or os.path.islink(dst):
-                continue
-            if use_symlink:
-                try:
-                    os.symlink(src, dst)
-                except OSError:
-                    # e.g. CIFS/network share without symlink support
-                    shutil.copy2(src, dst)
-            else:
-                shutil.copy2(src, dst)
+            _copy_or_link(src, os.path.join(method_dest, fname), use_symlink)
     return dest_root
+
+
+def copy_camera_photos(station_path, date_str, window_start, window_end, use_symlink=False):
+    """Copie (ou lie) les photos all-sky et mosaïques 360 dont l'horodatage tombe dans
+    [window_start, window_end] (bornes UTC tz-aware), à côté du dossier pySAS/ de la
+    station. Cherche d'abord dans le cache local déjà synchronisé (AS_Camera/,
+    Mosaic360/, peuplé par sync_allsky_camera.py / sync_360_camera.py pour les casts
+    M99NIR valides), sinon directement sur le montage SMB source -- pour couvrir aussi
+    les horodatages qui ne correspondent à aucun cast pySAS valide (ex. HS6/COPS a
+    tourné pendant un trou de QC pySAS). Utilisé par compare_pysas_cops.py et
+    compare_pysas_hs6.py."""
+    import sync_allsky_camera as sac
+    import sync_360_camera as s360
+
+    as_dest = os.path.join(station_path, "AS_Camera")
+    mo_dest = os.path.join(station_path, "Mosaic360")
+
+    n_as = 0
+    as_day_dir = sac._find_day_dir(rea.CAMERA_DIR, date_str) or sac._find_day_dir(sac.CAMERA_SRC_ROOT, date_str)
+    if as_day_dir:
+        pattern = re.compile(rf"{date_str}(\d{{6}})_\d+\.jpg$")
+        for fname in sorted(os.listdir(as_day_dir)):
+            m = pattern.match(fname)
+            if not m:
+                continue
+            frame_dt = pd.to_datetime(f"{date_str}{m.group(1)}", format="%Y%m%d%H%M%S", utc=True)
+            if not (window_start <= frame_dt <= window_end):
+                continue
+            os.makedirs(as_dest, exist_ok=True)
+            if _copy_or_link(os.path.join(as_day_dir, fname), os.path.join(as_dest, fname), use_symlink):
+                n_as += 1
+
+    n_mo = 0
+    index = s360._index_mosaics(rea.MOSAIC_DIR, date_str) or s360._index_mosaics(s360.CAMERA360_SRC_ROOT, date_str)
+    for entry_dt, path in index:
+        if not (window_start <= entry_dt <= window_end):
+            continue
+        os.makedirs(mo_dest, exist_ok=True)
+        if _copy_or_link(path, os.path.join(mo_dest, os.path.basename(path)), use_symlink):
+            n_mo += 1
+
+    print(f"📷 {n_as} image(s) all-sky, 🌐 {n_mo} mosaïque(s) 360 dans la fenêtre -> {as_dest} / {mo_dest}")
+    return n_as, n_mo
 
 
 def gather_pysas_spectra(df_window):
@@ -364,7 +416,7 @@ def plot_best_method_uncertainty(out_path, variant, best_method, cops_casts, cop
     plt.close(fig)
 
 
-def main(station_path, use_symlink=True):
+def main(station_path, use_symlink=False):
     station_path = os.path.abspath(station_path)
     date_str = parse_station_date(station_path)
     station_label = os.path.basename(station_path)
@@ -385,6 +437,8 @@ def main(station_path, use_symlink=True):
 
     dest_root = copy_pysas_files(df_window, station_path, use_symlink=use_symlink)
     print(f"📂 Données pySAS {'liées' if use_symlink else 'copiées'} dans : {dest_root}")
+
+    copy_camera_photos(station_path, date_str, window_start, window_end, use_symlink=use_symlink)
 
     pysas_wl, pysas_specs = gather_pysas_spectra(df_window)
     if pysas_wl is None:
@@ -419,7 +473,9 @@ def main(station_path, use_symlink=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("station_path", help="Chemin du dossier station (.../L2/YYYYMMDD_StationID/)")
-    parser.add_argument("--copy", action="store_true",
-                         help="Copier les fichiers L2 pySAS au lieu de créer des liens symboliques.")
+    parser.add_argument("--symlink", action="store_true",
+                         help="Lier symboliquement au lieu de copier (économise l'espace disque, mais "
+                              "les liens deviennent inutilisables sans accès au montage SMB -- ex. après "
+                              "la fin de la campagne. Copie réelle par défaut.)")
     args = parser.parse_args()
-    main(args.station_path, use_symlink=not args.copy)
+    main(args.station_path, use_symlink=args.symlink)
