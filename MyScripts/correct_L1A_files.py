@@ -1,5 +1,6 @@
 import h5py
 import numpy as np
+import pandas as pd
 import shutil
 import os
 import matplotlib.pyplot as plt
@@ -159,8 +160,105 @@ def process_pitch_offset(outfn, offset_value=0.0):
             print(f"    📐 Offset de Pitch appliqué ({offset_value}°) sur {os.path.basename(outfn)}")
 
 
+# --- FONCTION 4 : CORRECTION DE LA DÉRIVE D'HORLOGE DU DATALOGGER ---
+def _tags_to_datetime(datetag, timetag2):
+    """Convertit des tableaux DATETAG (YYYYDDD) + TIMETAG2 (HHMMSSmmm) -- l'horloge
+    interne du datalogger SeaBird -- en un DatetimeIndex UTC (vectorisé, via pandas)."""
+    datetag = np.asarray(datetag, dtype=np.int64)
+    timetag2 = np.asarray(timetag2, dtype=np.int64)
+
+    year = datetag // 1000
+    doy = datetag % 1000
+    base = pd.to_datetime(year.astype(str), format='%Y') + pd.to_timedelta(doy - 1, unit='D')
+
+    hh = timetag2 // 10000000
+    mm = (timetag2 // 100000) % 100
+    ss = (timetag2 // 1000) % 100
+    ms = timetag2 % 1000
+    tod = (pd.to_timedelta(hh, unit='h') + pd.to_timedelta(mm, unit='m')
+           + pd.to_timedelta(ss, unit='s') + pd.to_timedelta(ms, unit='ms'))
+    return pd.DatetimeIndex(base + tod)
+
+
+def _gps_to_datetime(date, utcpos):
+    """Convertit les champs GPS $GPRMC DATE (DDMMYY) + UTCPOS (HHMMSS.ss) -- l'heure
+    UTC vraie du GPS -- en un DatetimeIndex UTC (vectorisé, via pandas)."""
+    date = np.asarray(date, dtype=np.int64)
+    day = date // 10000
+    mon = (date // 100) % 100
+    year = 2000 + (date % 100)
+    base = pd.to_datetime({'year': year, 'month': mon, 'day': day})
+
+    utcpos = np.asarray(utcpos, dtype=np.float64)
+    hh = (utcpos // 10000).astype(np.int64)
+    mm = ((utcpos // 100) % 100).astype(np.int64)
+    ss = utcpos % 100
+    tod = pd.to_timedelta(hh, unit='h') + pd.to_timedelta(mm, unit='m') + pd.to_timedelta(ss, unit='s')
+    return pd.DatetimeIndex(base + tod)
+
+
+def compute_clock_drift_offset(outfn):
+    """Détecte automatiquement la dérive entre l'horloge interne du datalogger
+    (DATETAG/TIMETAG2, utilisée partout dans le pipeline y compris pour la géométrie
+    solaire) et l'heure GPS vraie (DATE/UTCPOS de la sentence $GPRMC), en comparant
+    les deux sur les mêmes enregistrements. Retourne le décalage en secondes à
+    AJOUTER à DATETAG/TIMETAG2 pour les aligner sur le GPS, ou None si indisponible."""
+    gp_path = "/GPRMC_NMEA0183v3.01.tdf"
+    with h5py.File(outfn, "r") as h5f:
+        if gp_path not in h5f:
+            return None
+        g = h5f[gp_path]
+        status = g["STATUS"][...]
+        valid = np.array([row[0] == b'A' for row in status])
+        if not valid.any():
+            return None
+        datetag = g["DATETAG"][...]['NONE'][valid]
+        timetag2 = g["TIMETAG2"][...]['NONE'][valid]
+        date = g["DATE"][...]['NONE'][valid]
+        utcpos = g["UTCPOS"][...]['NONE'][valid]
+
+    instr_dt = _tags_to_datetime(datetag, timetag2)
+    true_dt = _gps_to_datetime(date, utcpos)
+
+    offset_s = (true_dt - instr_dt) / pd.Timedelta(seconds=1)
+    median_offset = float(np.median(offset_s))
+    spread = float(np.std(offset_s))
+    if spread > 5:
+        print(f"    ⚠️  Dérive d'horloge incohérente sur {os.path.basename(outfn)} "
+              f"(médiane={median_offset:.1f}s, écart-type={spread:.1f}s) -- à vérifier manuellement.")
+    return median_offset
+
+
+def process_time_offset(outfn, offset_seconds):
+    """Décale DATETAG/TIMETAG2 d'un nombre fixe de secondes dans TOUS les groupes du
+    fichier HDF5 (y compris $GPRMC lui-même), pour corriger une dérive de l'horloge
+    interne du datalogger par rapport au temps GPS vrai. N'affecte pas DATE/UTCPOS
+    (déjà corrects, dérivés du GPS)."""
+    if offset_seconds is None or abs(offset_seconds) < 0.5:
+        return
+    delta = pd.to_timedelta(offset_seconds, unit='s')
+    with h5py.File(outfn, "r+") as h5f:
+        for gname in h5f.keys():
+            g = h5f[gname]
+            if "DATETAG" not in g or "TIMETAG2" not in g:
+                continue
+            datetag = g["DATETAG"][...]
+            timetag2 = g["TIMETAG2"][...]
+            shifted = _tags_to_datetime(datetag['NONE'], timetag2['NONE']) + delta
+
+            new_datetag = shifted.strftime('%Y%j').astype(np.int64).astype(np.float64)
+            new_timetag2 = (shifted.hour * 10**7 + shifted.minute * 10**5
+                             + shifted.second * 10**3 + (shifted.microsecond // 1000)).astype(np.float64)
+
+            datetag['NONE'] = new_datetag
+            timetag2['NONE'] = new_timetag2
+            h5f[gname]["DATETAG"][...] = datetag
+            h5f[gname]["TIMETAG2"][...] = timetag2
+    print(f"    🕒 Correction de dérive d'horloge appliquée ({offset_seconds:+.1f}s) sur {os.path.basename(outfn)}")
+
+
 # --- FONCTION MAÎTRESSE APPELÉE PAR LE BATCH ---
-def correct_L1A_file(inpath, outpath, fn, roll_offset, pitch_offset=0.0):
+def correct_L1A_file(inpath, outpath, fn, roll_offset, pitch_offset=0.0, fix_clock_drift=False):
     """Copie le fichier et applique séquentiellement les corrections requises."""
     infn = os.path.join(inpath, fn)
     outfn = os.path.join(outpath, fn)
@@ -172,6 +270,12 @@ def correct_L1A_file(inpath, outpath, fn, roll_offset, pitch_offset=0.0):
     shutil.copy2(infn, outfn)
 
     # Exécution des corrections modulaires
+    if fix_clock_drift:
+        offset_s = compute_clock_drift_offset(outfn)
+        if offset_s is not None:
+            process_time_offset(outfn, offset_s)
+        else:
+            print(f"    ⚠️  Impossible de calculer la dérive d'horloge pour {fn} (pas de $GPRMC valide).")
     process_heading_interpolation(outfn, plot_dir)
     process_roll_offset(outfn, offset_value=roll_offset)
     process_pitch_offset(outfn, offset_value=pitch_offset)

@@ -86,6 +86,12 @@ parser.add_argument("--roll-offset", type=float, default=None,
 parser.add_argument("--pitch-offset", type=float, default=None,
                     help="Surcharge ponctuelle de PITCH_OFFSET (pipeline_config.env), meme "
                          "usage que --roll-offset.")
+parser.add_argument("--fix-clock-drift", action="store_true",
+                    help="Au niveau L1AQC seulement: detecte et corrige automatiquement une "
+                         "derive de l'horloge interne du datalogger (DATETAG/TIMETAG2) par "
+                         "rapport au temps GPS vrai ($GPRMC DATE/UTCPOS), pour les fichiers "
+                         "cibles (utiliser avec --time pour ne corriger qu'une plage precise). "
+                         "Voir correct_L1A_files.py::compute_clock_drift_offset.")
 
 args = parser.parse_args()
 
@@ -381,7 +387,8 @@ if __name__ == "__main__":
                     os.path.join(PATH_INPUT, "L1A_corrected"),
                     filename,
                     roll_offset=ROLL_OFFSET,
-                    pitch_offset=PITCH_OFFSET
+                    pitch_offset=PITCH_OFFSET,
+                    fix_clock_drift=args.fix_clock_drift
                 )
                 print(f"    ✅ Heading interpolation, Roll and Pitch offsets successfully applied to {filename}")
             except Exception as e:
