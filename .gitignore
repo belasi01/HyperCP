@@ -100,3 +100,9 @@ run_*.py
 # Pipeline config with credentials — copy pipeline_config.env.template and fill in
 MyScripts/pipeline_config.env
 
+# Stray local test/debug artifacts
+cookies.txt
+curl_response
+test.nc
+test.nc4
+
