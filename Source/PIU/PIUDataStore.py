@@ -461,7 +461,8 @@ class PIUDataStore:
                 radcal_raw - radcal column 2, raw calibration data
         """
         radcal_raw = np.array([rc[0] for rc in grp.getDataset(f"CAL_{s_type}").data])
-        raw_data = np.asarray(list(raw_slices[s_type]['data'].values())).transpose() / 65535.0
+        #raw_data = np.asarray(list(raw_slices[s_type]['data'].values())).transpose() / 65535.0
+        raw_data = np.asarray(list(raw_slices['data'].values())).transpose() / 65535.0
         DarkPixelStart = int(grp.attributes["DarkPixelStart"])
         DarkPixelStop = int(grp.attributes["DarkPixelStop"])
         int_time = np.asarray(grp.getDataset("INTTIME").data.tolist())
