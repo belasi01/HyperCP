@@ -40,14 +40,29 @@ def read_tsg(filen):
     """
     Lit les données du TSG de l'Amundsen (sans en-tête),
     nettoie les espaces cachés et gère les NaN textuels.
-    """
-    # skipinitialspace=True élimine les espaces invisibles après les ";"
-    # na_values=["NaN"] gère les chaînes de texte vides
-    df = pd.read_csv(filen, sep=";", header=None, low_memory=False,
-                     skipinitialspace=True, na_values=["NaN"])
 
-    df.columns = ["datetime", "time", "lat", "lon", "t1", "c1",
-                  "s", "sv", "t2", "fluo", "debi", "sv2"]
+    Le nombre de champs par ligne peut changer en cours de fichier -- vu le
+    2026-08-21, où un canal supplémentaire apparaît à partir de 05:00:37 UTC (12
+    champs avant, 13 après, un fichier par jour peut donc mélanger les deux). Un
+    pd.read_csv à schéma fixe fait planter tout le fichier dans ce cas
+    (pandas.errors.ParserError). Comme les 3 champs réellement utilisés en aval
+    (t2, s, fluo -- positions 9, 7, 10) sont tous AVANT le point d'insertion, on
+    lit ligne par ligne et on ignore simplement les champs en trop plutôt que de
+    perdre tout le fichier ou les lignes les plus récentes.
+    """
+    columns = ["datetime", "time", "lat", "lon", "t1", "c1",
+              "s", "sv", "t2", "fluo", "debi", "sv2"]
+    rows = []
+    with open(filen, "r") as f:
+        for line in f:
+            parts = [p.strip() for p in line.rstrip("\n").split(";")]
+            if len(parts) < len(columns):
+                continue
+            rows.append(parts[:len(columns)])
+
+    df = pd.DataFrame(rows, columns=columns)
+    for col in columns[1:]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # Conversion de la colonne temporelle en datetime UTC
     df['datetime'] = pd.to_datetime(df['datetime'], errors='coerce', utc=True)

@@ -305,6 +305,22 @@ def get_combined_day_data(date_strs):
     return data
 
 
+def _compute_map_bounds(lats, lons, padding_frac=0.15):
+    """Centre + zoom approximatif à partir de l'étendue lat/lon -- go.Scattermap (tuiles
+    OpenStreetMap, bien plus détaillées que le trait de côte intégré de Scattergeo/geo,
+    plafonné à 1:50M) n'a pas d'équivalent direct à fitbounds='locations'."""
+    lat_min, lat_max = float(np.min(lats)), float(np.max(lats))
+    lon_min, lon_max = float(np.min(lons)), float(np.max(lons))
+    lat_span = max(lat_max - lat_min, 0.01)
+    lon_span = max(lon_max - lon_min, 0.01)
+    # Le zoom double la zone visible à chaque -1 -- calé sur la plus grande des deux
+    # étendues (avec une marge) pour que tous les points restent dans le cadre.
+    span = max(lat_span, lon_span) * (1 + padding_frac)
+    zoom = float(np.clip(8 - np.log2(span), 1, 15))
+    center = dict(lat=(lat_min + lat_max) / 2, lon=(lon_min + lon_max) / 2)
+    return center, zoom
+
+
 def build_map_figure(df_casts, color_values, color_label, cmin=None, cmax=None,
                       hover_values=None, colorbar_tickvals=None, colorbar_ticktext=None):
     color_values = pd.Series(np.asarray(color_values, dtype=float), index=df_casts.index)
@@ -332,7 +348,8 @@ def build_map_figure(df_casts, color_values, color_label, cmin=None, cmax=None,
     marker = dict(
         size=10, color=color_values, colorscale="Viridis",
         colorbar=colorbar,
-        line=dict(color="black", width=0.5),
+        # go.Scattermap (tuiles OSM) ne supporte pas marker.line (pas de contour
+        # possible sur les points, contrairement à Scattergeo).
     )
     if cmin is not None:
         marker["cmin"] = cmin
@@ -344,7 +361,7 @@ def build_map_figure(df_casts, color_values, color_label, cmin=None, cmax=None,
     # first of the next.
     multi_date = df_casts["Date"].nunique() > 1 if "Date" in df_casts else False
 
-    fig = go.Figure(go.Scattergeo(
+    fig = go.Figure(go.Scattermap(
         lon=df_casts["Longitude"],
         lat=df_casts["Latitude"],
         mode="markers" if multi_date else "lines+markers",
@@ -354,18 +371,9 @@ def build_map_figure(df_casts, color_values, color_label, cmin=None, cmax=None,
         hoverinfo="text",
         customdata=customdata,
     ))
-    fig.update_geos(
-        fitbounds="locations",
-        resolution=50,
-        showland=True, landcolor="#f4f3ef",
-        showocean=True, oceancolor="#e0f3ff",
-        showlakes=True, lakecolor="#e0f3ff",
-        showrivers=True, rivercolor="#e0f3ff",
-        showcoastlines=True, coastlinecolor="#7f8c8d",
-        showcountries=True, countrycolor="#bdc3c7",
-        projection_type="mercator",
-    )
+    center, zoom = _compute_map_bounds(df_casts["Latitude"], df_casts["Longitude"])
     fig.update_layout(
+        map=dict(style="open-street-map", center=center, zoom=zoom),
         title="Trajectoire du navire (cliquer un point ; icône lasso/rectangle dans la barre "
               "d'outils pour sélectionner un groupe -- l'icône zoom permet d'y revenir)",
         margin=dict(l=10, r=10, t=50, b=10),
