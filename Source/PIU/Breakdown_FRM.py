@@ -371,12 +371,52 @@ class SolveLPU:
             (1/S12**2)**2 * UNC['S1']**2 +
             ((S12 - 2*DATA['S1']) / S12**3)**2 * LPU_UNCS['S12']
         )
-        if ConfigFile.settings['SensorType'].lower() == "seabird":
-            no_lin_corr = DATA['cb_alpha'] == 0
-        else:
-            no_lin_corr = DATA['cb_alpha'] == -2e-7
+        # Align class-based alpha values and uncertainties with the
+        # calibrated pixel space used by the LPU alpha uncertainty.
+        cb_alpha = np.asarray(DATA['cb_alpha'])
+        cb_alpha_unc = np.asarray(UNC['cb_alpha'])
+        common_cal_pix = np.asarray(
+            PDS.l1ACommonCalPix255,
+            dtype=bool
+        )
 
-        LPU_UNCS['alpha'][no_lin_corr] = UNC['cb_alpha'][no_lin_corr] 
+        if cb_alpha.shape != cb_alpha_unc.shape:
+            raise ValueError(
+                f"{s} cb_alpha mismatch: "
+                f"{cb_alpha.size} coefficients and "
+                f"{cb_alpha_unc.size} uncertainties."
+            )
+
+        if cb_alpha.size == LPU_UNCS['alpha'].size:
+            # Already on the common calibrated-pixel grid.
+            cb_alpha_common = cb_alpha
+            cb_alpha_unc_common = cb_alpha_unc
+
+        elif (
+            cb_alpha.size == common_cal_pix.size
+            and np.count_nonzero(common_cal_pix)
+            == LPU_UNCS['alpha'].size
+        ):
+            # Full detector grid: select commonly calibrated pixels.
+            cb_alpha_common = cb_alpha[common_cal_pix]
+            cb_alpha_unc_common = cb_alpha_unc[common_cal_pix]
+
+        else:
+            raise ValueError(
+                f"Unexpected {s} cb_alpha dimensions: "
+                f"{cb_alpha.size} detector values, "
+                f"{common_cal_pix.size} mask values, and "
+                f"{LPU_UNCS['alpha'].size} LPU alpha values."
+            )
+
+        if ConfigFile.settings['SensorType'].lower() == "seabird":
+            no_lin_corr = cb_alpha_common == 0
+        else:
+            no_lin_corr = cb_alpha_common == -2e-7
+
+        LPU_UNCS['alpha'][no_lin_corr] = (
+            cb_alpha_unc_common[no_lin_corr]
+        )
 
         return LPU_UNCS
 

@@ -566,10 +566,14 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
                                          PDS.coeff[sensor]['radcal_wvl'][PDS.l1ACommonCalPix],
                                          l2Wavelength,
                                          return_as_dict=False)
-            PDSL2[f'{sensor}Ccal'] = utils.interp_common_wvls(PDS.coeff[sensor]['cal'][PDS.l1ACommonCalPix255],
-                                         PDS.coeff[sensor]['radcal_wvl'][PDS.l1ACommonCalPix],
-                                         l2Wavelength,
-                                         return_as_dict=False)
+            # Calibration coefficients and wavelengths are already stored
+            # on the calibrated-pixel grid by PIUDataStore.
+            PDSL2[f'{sensor}Ccal'] = utils.interp_common_wvls(
+                PDS.coeff[sensor]['cal'],
+                PDS.coeff[sensor]['radcal_wvl'],
+                l2Wavelength,
+                return_as_dict=False
+            )
         # Some PDS elements are at the reported/output bands, some at the full 255 pixels. Use masks accordingly.
         #   These are all at common pixels, regardless of the wavelength.
         # These are all at a common set of bands from raw ES at the common set of calibrated pixels
