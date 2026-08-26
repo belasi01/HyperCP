@@ -5,7 +5,6 @@ import shutil
 import re
 from pathlib import Path
 from datetime import datetime
-import urllib.request
 import threading
 
 import numpy as np
@@ -22,18 +21,10 @@ from Source.Controller import Controller
 from Source.CalibrationFileReader import CalibrationFileReader
 from Source import PACKAGE_DIR as CODE_HOME
 
-# Wrap the original urlopen with a fixed timeout argument (must be before ocdb import)
-# TODO: Ask OCDB team to implement a timeout option
-time_out = 5
-original_urlopen = urllib.request.urlopen
-def urlopen_default_timeout(*args, **kwargs):
-    print('Modified urlopen called to enforce timeout of %s seconds' % time_out)
-    if 'timeout' in kwargs:
-        return urllib.request.urlopen(*args, **kwargs)  # If timeout is already specified, use it
-    return original_urlopen(*args, **kwargs, timeout=time_out)
-urllib.request.urlopen = urlopen_default_timeout
-
 from ocdb.api.OCDBApi import new_api, OCDBApi
+
+# Default OCDB API timeout (this counts for each individual file search/download)
+OCDB_timeout = 2
 
 class MplCanvas(FigureCanvasQTAgg):
 
@@ -589,7 +580,7 @@ class CalCharWindow(QtWidgets.QDialog):
         try:
             for sensorType, serialNumber_calCharTypes in ConfigFile.settings['neededCalCharsFRM'].items():
                 for serialNumber_calCharType in serialNumber_calCharTypes:
-                    available_files[serialNumber_calCharType] = OCDBApi.fidrad_list_files(self.FidRadDB_api, serialNumber_calCharType)
+                    available_files[serialNumber_calCharType] = OCDBApi.fidrad_list_files(self.FidRadDB_api, serialNumber_calCharType, timeout=OCDB_timeout)
         except Exception as e:
             print('Unable to list files of type in FidRadDB: %s' % e)
             success = False
@@ -623,7 +614,7 @@ class CalCharWindow(QtWidgets.QDialog):
         # Nothing to download, return
         if len(missingFilesList) == 0:
             print('All cal./char. files were found under %s for the selected regime, nothing to download' % ConfigFile.getCalibrationDirectory())
-            return
+            return success
 
         # Initialise list to be inputted to the FidRadDB download function
         self.files_to_be_downloaded = []
@@ -663,8 +654,8 @@ class CalCharWindow(QtWidgets.QDialog):
             if len(files) == 0:
                 print('Nothing found in FidRadDB (unreachable?)')
             for file in files:
-                _ = OCDBApi.fidrad_list_files(self.FidRadDB_api, file)
-                msg = OCDBApi.fidrad_download_file(self.FidRadDB_api, file, path_out)
+                _ = OCDBApi.fidrad_list_files(self.FidRadDB_api, file, timeout=OCDB_timeout)
+                msg = OCDBApi.fidrad_download_file(self.FidRadDB_api, file, path_out, timeout=OCDB_timeout)
                 if not msg.startswith('File successfully'):
                     success = False
         except Exception as e:
@@ -707,11 +698,11 @@ class CalCharWindow(QtWidgets.QDialog):
         self.addCalCharFilesButton.setDisabled(True)
 
         # Just before thread starts line edits show checking status (cannot be done inside thread otherwise UI can crash)
-        self.FidRadDBcalCharDirCheckES.setText('Checking FidRadDB, (%i sec)...' % time_out)
+        self.FidRadDBcalCharDirCheckES.setText('Checking FidRadDB, (%i sec)...' % OCDB_timeout)
         self.FidRadDBcalCharDirCheckES.setCursorPosition(0)  # Avoid text getting trimmed from the left
-        self.FidRadDBcalCharDirCheckLT.setText('Checking FidRadDB, (%i sec)...' % time_out)
+        self.FidRadDBcalCharDirCheckLT.setText('Checking FidRadDB, (%i sec)...' % OCDB_timeout)
         self.FidRadDBcalCharDirCheckLT.setCursorPosition(0)
-        self.FidRadDBcalCharDirCheckLI.setText('Checking FidRadDB, (%i sec)...' % time_out)
+        self.FidRadDBcalCharDirCheckLI.setText('Checking FidRadDB, (%i sec)...' % OCDB_timeout)
         self.FidRadDBcalCharDirCheckLI.setCursorPosition(0)
 
         # Start thread

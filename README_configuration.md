@@ -155,7 +155,8 @@ Regardless of the raw filenames for the individual instruments, the higher level
 
 Process data from raw binary to L1A (Hierarchical Data Format 5 '.hdf'). Raw data files expected are .raw (or .RAW), .mlb, or .TXT for Sea-Bird, TriOS, or DALEC, respectively. It is helpful to keep them in the directory that the Main configuration points to, but directory can be named anything (e.g., "RAW").
 
-***NOTE: Caps-on-darks*** For TriOS manual acquisition, it is possible to estimate the internal working temperature of each radiometer by collecting data samples with the light occluded by covering the foreoptics (i.e., with the cap). The basis for this approach is provided in Zibordi and Talone, in prep. (2025). This requires that station/cast can be designated as described above for L0 filenaming. Caps-on dark measurements are made to help estimate the internal noise of the instrument as a function of temperature, and by inversion can be applied to extract the temperature of the instrument during a station collection and apply that temperature in the processing of normal "S" data aquisition. When selected in L1B (see below), filenames containing "XXYYS" (where XX is station and YY is cast) can use the internal temperature derived in the "XXYYD" file for each radiometer (where only XX-station needs to match, not YY-cast). For example, a caps-on dark file at station 01 processed to L1A using the option **Caps-on darks only** with filename containing "20250617-100300_0101D" can be used to find the internal working temperature of each sensor and applied to regular casts with filenames containing "20250617-100800_0101S", "20250617-101300_0102S", and "20250617-101800_0103S" (casts 01, 02, and 03 at station 01).
+***NOTE: Caps-on-darks*** For TriOS manual acquisition, it is possible to estimate the internal working temperature of each radiometer by collecting data samples with the light occluded by covering the foreoptics (i.e., with the cap).
+The basis for this approach is provided in [Zibordi & Talone 2025](https://journals.ametsoc.org/view/journals/atot/aop/JTECH-D-25-0049.1/JTECH-D-25-0049.1.pdf). This requires that station/cast can be designated as described above for L0 filenaming. Caps-on dark measurements are made to help estimate the internal noise of the instrument as a function of temperature, and by inversion can be applied to extract the temperature of the instrument during a station collection and apply that temperature in the processing of normal "S" data aquisition. When selected in L1B (see below), filenames containing "XXYYS" (where XX is station and YY is cast) can use the internal temperature derived in the "XXYYD" file for each radiometer (where only XX-station needs to match, not YY-cast). For example, a caps-on dark file at station 01 processed to L1A using the option **Caps-on darks only** with filename containing "20250617-100300_0101D" can be used to find the internal working temperature of each sensor and applied to regular casts with filenames containing "20250617-100800_0101S", "20250617-101300_0102S", and "20250617-101800_0103S" (casts 01, 02, and 03 at station 01).
 
 **Solar Zenith Angle Filter**: prescreens data for high SZA (low solar elevation) to exclude files which may have been
 collected post-dusk or pre-dawn from further processing.
@@ -172,11 +173,13 @@ Unlike other approaches, HyperCP eliminates data flagged for problematic pitch/r
 non-environmental anomalies.
 
 
-- **SunTracker**: Select when using an autonomous platform such as SolarTracker, pySAS, DALEC, or So-Rad. In this case sensor and solor geometry data will come from the robot. If deselected, solar geometries will be calculated from GPS time and
- position with Pysolar, while sensor azimuth (i.e. ship heading and sensor offset) must either be provided in the
- ancillary data or (eventually) from other data inputs. Currently, if SunTracker is unchecked, the Ancillary file
- chosen in the Main Window will be read in, subset for the relevant dates/times, held in the ANCILLARY_NOTRACKER group
- object, and carried forward to subsequent levels. If the ancillary data file is very large (e.g. for a whole cruise at high temporal resolution), this process of reading in the text file and subsetting it to the radiometry file can be slow.
+- **SunTracker**: Select when using an autonomous platform such as SolarTracker, pySAS, DALEC, or So-Rad. In this case 
+sensor and solor geometry data will come from the robot. If deselected, solar geometries will be calculated from GPS time and
+position with Pysolar, while sensor azimuth (i.e. ship heading and sensor offset) must either be provided in the
+ancillary data or (eventually) from other data inputs. Currently, if SunTracker is unchecked, the Ancillary file
+chosen in the Main Window will be read in, subset for the relevant dates/times, held in the ANCILLARY_NOTRACKER group
+object, and carried forward to subsequent levels. If the ancillary data file is very large (e.g. for a whole cruise at 
+high temporal resolution), this process of reading in the text file and subsetting it to the radiometry file can be slow.
 
 - **Rotator Home Angle Offset**: Generally 0. This is the offset between the neutral position of the radiometer suite and
 the bow of the ship. This *should* be zero if the SAS Home Direction was set at the time of data collection in the
@@ -243,11 +246,41 @@ Fallback values for wind speed, AOD, air temperature, SST, and salinity can be p
 
 ### L1B: Calibration/Characterization options
 
-The internal working temperature of each sensor is critical for thermal correction of the signal and/or uncertainty associated with thermal response. This temperature can be derived in several ways. For Sea-Bird, DALEC, and TriOS G2 sensors, an internal thermistor provides the working temperature. For TriOS G1, which has no thermistor, there are two options to derive working temperature: 1) Air temperature + 5°C (best for temperatures below 30°C) 2) Caps-on dark measurements (best for temperatures above 30°C) (Zibordi & Talone, 2025 in prep.) See note in Level 1A Processing [above](#configuration).
+When clicking "Select Cal/Char Options" a pop-up window will show looking like this (depending on OS):
+
+<center><img src="Data/Img/CalChar_window.png" alt="banner"></center>
+
+The options in the cal/char window are organised as follows:
+
+#### 1. Select source of internal sensor working temperature
+
+The internal working temperature of each sensor is critical for thermal correction of the signal and/or uncertainty associated with thermal response.
+This temperature can be derived in several ways:
+- For Sea-Bird, DALEC, and TriOS G2 sensors, an **internal thermistor** provides the working temperature.
+  - If your sensor(s) belong to these classes, this is the most accurate and recommended option. 
+- For TriOS G1, which has no thermistor, there are **two** options to circumvent the lack of working temperature reading
+  - Use "T$_{air}$ + 2.5°C", where T$_{air}$ is the ambient air temperature  (most accurate for T$_{air}$ < 30°C)
+  - Estimate working temperature for caps-on dark measurements (most accurate for T$_{air}$ $\geq$ 30°C) 
+  - NB: If selecting the latter option (caps-on), the processing will fall back to "air temperature + 2.5" whenever the air temperature is available and exceeding 30°C.
+  - NB: These options are thoroughly discussed in ([Zibordi & Talone, 2025](https://journals.ametsoc.org/view/journals/atot/aop/JTECH-D-25-0049.1/JTECH-D-25-0049.1.pdf))
+    - See note in Level 1A Processing [above](#configuration) to understand how to set up the caps-on measurements.
+
+The table summarizes the options
+
+
+| Option                                         | Description                                                                    | Recommended if ...                                                                                                  |
+|------------------------------------------------|--------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|
+| **Internal Thermistor**                        | Uses the built-in temperature sensor (available for SeaBird and DALEC)         | ... thermistor is available (still not supported for TriOS G2)                                                      |
+| **T$_{air}$ + 2.5°C**                          | Estimates working temperature by adding 2.5°C to T$_{air}$                     | ... thermistor is unavailable and caps-on darks unavailable                                                         | 
+| **Caps-on Dark File (T$_{air}$ $\geq$ 30 °C)** | Estimate working temperature from dark current measurements taken with caps on | ... thermistor is unavailable and caps-on darks are available (falls back to "T$_{air}$+2.5°C" if T$_{air}$ < 30°C) |
+
+---
+
+#### 2.Select Calibration-Characterization Regime
 
 Three calibration/characterization regimes are available:
 
-**Non-FRM Factory:**
+- **Non-FRM Factory:**
 This regime performs the radiometric calibration using the radiometric gains provided within the factory configuration
 files. For Sea-Bird, TriOS, and DALEC, the calibration process follow their respective manufacturer recommendation.
 Although no uncertainty values associated to the radiometric factors are currently available in the factory configuration files,
@@ -257,7 +290,8 @@ factor uncertainty, taken from "The Seventh SeaWiFS Intercalibration Round-Robin
 but remains an interesting first step to characterize the data. Unfortunately, there is no equivalent for TriOS or DALEC and no
 uncertainties values will be outputted with this regime for TriOS or DALEC.
 
-**FRM Class-Specific:**
+
+- **FRM Class-Specific:**
 This regimes performs the radiometric calibration using the radiometric characterization completed by external laboratories.
 The radiometric characterization includes both the radiometric gains and their uncertainties for each sensor. The results
 are saved in the so called "RADCAL" file, with one file per sensor. The calibration process is identical to the factory regime
@@ -267,7 +301,8 @@ propagation are: the straylight impact, the temperature sensitivity, the polaris
 response (for irradiance only), the detector non-linearity and the calibration stability (see [this report](https://frm4soc2.eumetsat.int/sites/default/files/inline-files/FRM4SOC-2_D-10_v2.4_210042023_NPL_EUMETSAT_signed.pdf)).
 Currently, the only classes characterized are Sea-Bird and TriOS.
 
-**FRM Sensor-Specific (Full-Characterization; Highest Quality):**
+
+- **FRM Sensor-Specific (Full-Characterization; Highest Quality):**
 This regime performs the complete correction of the radiometry using the full characterization of each sensor by external
 laboratories. For both Sea-Bird and TriOS the radiometric calibration process is performed with additional corrections (DALEC in development). The
 corrections are possible only thanks to the full characterization of the sensors provided in the matching files. The process
@@ -276,29 +311,142 @@ response correction (for irradiance only) and the temperature correction (see [t
 The process also provides FRM compliant uncertainties accounting for the residuals effects of each contributors, meaning the correction residuals are used as uncertainty
 contributor instead of global class-based contribution, leading to smaller uncertainty values.
 
-There are three options for deciding which calibration files are applied when using FidRadDB RADCAL files (see Cal/Char options button under Config. Edit):
 
-**Most recent prior to acquisition (default)**
-Given the available RADCALs for each of the 3 individual radiometric sensors ivolved in the measurement (ES, LT, and LI),
+> **Note:** For both FRM regimes, please check [FidRadDB](https://ocdb.eumetsat.int/docs/fidrad-database.html) to understand the FidRadDB formats.
+
+A summary table:
+
+| Regime                                                      | Description                                                                                                                                                                                                                                                                                             | Recommended if ...                                                            |
+|-------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------|
+| **Non-FRM, factory calibration only**                       | Basic factory calibration will be used. No uncertainties provided (except a tenative estimate for SeaBird, based on SIRREX-7). Lower quality, non-Fiducial Reference Measurements (FRM).                                                                                                                | ... you lack FidRaDB-fromatted **calibrations** with uncertainties            | 
+| **FRM Class-Specific characterisations**                    | Calibrations with uncertainties in FidRadDB format will be used. No corrections will be applied to mitigate sensor non-ideal performances (e.g. thermal/angular/polarization dependencies, or device straylight effects). Uncertainties will be estimated (larger compared to the sensor-specific case) | ... you lack all sensor-specific **characterizations**                        |       
+| **FRM Sensor-Specific characterisations (highest quality)** | Calibrations AND characterisations in FidRadDB format will be used. Corrections for sensor characteristics will be applied. Uncertainties will be estimated                                                                                                                                             | ... you have all sensor-specific **calibrations** and **characterizations**   |
+
+---
+
+#### 3. Checking for required FidRadDB-formatted cal/char files:
+
+This section is intended to inform the user about the files the user needs to process their data considerng the cal/char regime selected above.
+
+The screenshot provided above shows the ideal case in which all the files are available for the given class or serial numbers and the given FRM regime:
+
+| Sensor                               | Serial Number    | Status                 |
+|--------------------------------------|------------------|------------------------|
+| **Es** (Irradiance sensor)           | SAM_8329         | All needed files found |
+| **Lt** (Radiance sensor - target)    | SAM_8595         | All needed files found |
+| **Li** (Radiance sensor - reference) | SAM_8166         | All needed files found |
+
+However, other messages could occur, e.g.:
+
+| Sensor                               | Serial Number    | Status                                                                      |
+|--------------------------------------|------------------|-----------------------------------------------------------------------------|
+| **Es** (Irradiance sensor)           | SAM_8329         | **Must download files from FidRadDB: CP_SAM_8329_STRAY_20220706131609.TXT** |
+| **Lt** (Radiance sensor - target)    | SAM_8595         | All files available                                                         |
+| **Li** (Radiance sensor - reference) | SAM_8166         | All files available                                                         |
+
+In this case, the STARYLIGHT characterization file for your E$_{S}$ sensor is missing, meaning you cannot process the sensor-specific cal/char regime.  
+
+To solve this, you have two options:
+
+- **Copy from local source**:  In case you have this file available somewhere in your local system
+- **Download from FidRadDB**:  Download the file from the FidRadDB server
+
+Other possible options could be:
+
+- **Outdated** RADCAL list of files:
+
+| Sensor                               | Serial Number    | Status                                                                                  |
+|--------------------------------------|------------------|-----------------------------------------------------------------------------------------|
+| **Es** (Irradiance sensor)           | SAM_8329         | **Suggest download updated files from FidRadDB: CP_SAM_8329_RADCAL_20250903120458.TXT** |
+| **Lt** (Radiance sensor - target)    | SAM_8595         | All needed files found                                                                  |
+| **Li** (Radiance sensor - reference) | SAM_8166         | All needed files found                                                                  |
+
+- FidRadDB **unreachable** 
+
+| Sensor                               | Serial Number    | Status                                                                        |
+|--------------------------------------|------------------|-------------------------------------------------------------------------------|
+| **Es** (Irradiance sensor)           | SAM_8329         | All files available, but **update status unconfirmed** (FidRadDB unreachable) |
+| **Lt** (Radiance sensor - target)    | SAM_8595         | All files available, but **update status unconfirmed** (FidRadDB unreachable) |
+| **Li** (Radiance sensor - reference) | SAM_8166         | All files available, but **update status unconfirmed** (FidRadDB unreachable) |
+
+... in both cases, you can attempt to download the missing files from FidRadDB, but if unsuccessfull you can still run your data using the selected
+cal/char regime.
+
+---
+
+#### 4. Multiple Calibrations available? Select option
+
+> **Note:** Only supported for FRM regimes.
+
+In the case your sensor(s) were calibrated multiple times, there are three options for deciding which calibration files 
+will be applied:
+
+- **Most recent prior to acquisition (default)**
+Given the available RADCALs for each of the 3 individual radiometric sensors involved in the measurement (ES, LT, and LI),
 HyperCP will select all 3 RADCALS whose calibration time stamp corresponds to the most recent one prior to the field
 measurement acquisition. As an example, if you went to the field in March and had two pre-calibrations for ES done in January, 
-February and then two post-calibrations done in August, and October, HyperCP will pick the February one. In the absence of
-pre-calibrations, it will choose the closest post-calibration (August). The same criterion will be applied for LT (water)
-and LI (sky)
+February and then two post-calibrations done in August, and October, HyperCP will pick the February one. 
+The same criterion will be applied for LT (water) and LI (sky)
 
-**Pre- and Post- deployment average**
-NB: This option is yet not implemented. This option will take user-specified pre-calibrations and post-calibrations and 
-average them. Details of how this average will be done are pending scientific discussions.
+- **Pre- and Post- deployment calibrations: Check consistency, and use closest to acquisition time**
+This option will take user-specified pre-calibrations and post-calibrations and check whether they are compatible metrologically within
+their uncertainties, also considering the expected drift of $1\%/year$. To check this, the following $E_{n}$-score will be calculated:
 
-**User specified**
+$$
+E_{n}(r_1,r_2) = \frac{r_1-r_2}{\sqrt{(\Delta r_1)^2+(\Delta r_2)^2 + (2 \times 1\%\overline{r} \times \Delta t )^2}}
+$$
+
+where:
+- $r_{1}$ and $\Delta r_{1}$ are the pre-deployment calibration responsivities and their associated uncertainties (k=2)
+- $r_{2}$ and $\Delta r_{2}$ are the post-deployment calibration responsivities and their associated uncertainties (k=2)
+- $\bar{r}$ is the mean responsivity
+- $\Delta t$ is the timelapse between the pre- and post- calibrations (in years)
+
+Consistency check will pass if: 
+
+$$
+E_{n}(r_1,r_2) < 1,
+$$
+
+otherwise, a WARNING will be raised to the user to independently assess the inputted calibrations, and eventually check with the laboratory.
+
+The test window(s) should look something like this - one for each sensor:
+
+<center><img src="Data/Img/Cal_pre_post_check.png" alt="banner"></center>
+
+> **Note:** Processing will still be achievable in case the test FAILS. It will be up to the user to independently assess the detected inconsistency!
+
+- **User specified**
 This option simply takes specific calibration files selected by the user. The user must select 3 RADCALs, one for each sensor
-ES, LT, and LI
+ES, LT, and LI.
 
 **Multiple characterizations?**
-In the very rare case in which Full FRM cal/char regime is selected and a specific radiometer (a specimen with a serial
-number) was characterised several times for the same effect, HyperCP will always choose the most recent characterisation 
-(regardless of the filed measurement acquisition time). An example would be an ES sensor which was chacarterised for 
-internal straylight twice, in 2022 and 2025. Then, HyperCP will always consider the 2025 characterisation as the valid one.
+In the very rare case in which Full FRM cal/char regime is selected and a specific radiometer (e.g. SAM_8329 as in the sample TRIOS case)
+was characterised several times for the same effect, HyperCP will choose the most recent characterisation *prior to field acquisition time*.
+If not available, it will choose the *closest to the field acquisition time*.
+
+An example would be a case in which an ES sensor was characterised for internal straylight twice, in **Jan 2022** and **Jan 2025**:
+
+- If field measurement was acquired in **Dec 2021**, then HyperCP will pick the **Jan 2022** straylight file.
+- If field measurement was acquired in **Dec 2024**, then HyperCP will pick the **Jan 2022** straylight file.
+- If field measurement was acquired in **Jan 2027**, then HyperCP will pick the **Jan 2025** straylight file.
+
+
+| Option                                                                 | Description                                                                                          |
+|------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|
+| **Use most recent calibrations prior to acquisition time** *(default)* | Automatically selects the latest calibration files previous to the measurement acquisition           |
+| **Use pre- and post-calibrations**                                     | Checks consistency between pre-/post- calibrations and uses the one closest to acquisition time      |
+| **Use specific calibration files**                                     | Ignores acquisition dates entirely and uses manually selected calibration files regardless of timing |
+
+---
+
+#### Close Cal/Char window
+
+Please click Save/Close to save the selected options.
+
+---
+
+Interpolation
 
 Once instrument calibration has been applied, data are interpolated to common timestamps and wavebands, optionally
 generating temporal plots of Li, Lt, and Es, and ancillary data to show how data were interpolated.
@@ -412,7 +560,6 @@ optimal ensemble periods within that hour will depend on how rapidly conditions 
     glitter from capillary waves. The percentile chosen is sensitive to the sampling rate. The 5% default recommended in
     Hooker et al. 2002 was devised for a multispectral system with rapid sampling rate.
     - **Default**: 5 % (Hooker et al. 2002, Zibordi et al. 2002, Hooker and Morel 2003); <10% (IOCCG Draft Protocols).
-    TODO can this be made compatible with Kevin Ruddick's recommendation of chosing the first 5 scans?
 
 ### L2 Sky/Sunglint Correction (rho) and NIR correction
 
