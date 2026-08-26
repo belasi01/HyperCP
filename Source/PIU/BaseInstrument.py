@@ -32,12 +32,19 @@ import Source.utils.interpolating as interpolating
 
 
 class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators which exist to give warnings to coders.
-    """Base class for instrument uncertainty analysis. Abstract methods are utilised where appropriate. The core idea is
-    to reuse as much code as possible whilst making it simpler to add functionality through the addition of child
-    classes"""
+    """Base class for uncertainty calculation - runs from instrument noise to L2 products. Divides workflow between instrument classes:
+        - HyperOCR
+        - TriOS
+        - sorad
+        - DALEC
+        - TriOS ES only
+
+        Contains all methods common between all instrument types, abstract methods used for instrument specific functions i.e. FRM L1A processing.
+    """
 
     # variable placed here will be made available to all instances of Instrument class. Varname preceded by '_'
     # to indicate privacy, this should NOT be changed at runtime
+    # dictionary of satellites, their corresponding functions in Source.Weight_RSR and band centres
     _SATELLITES: dict = {
         "S3A": {"name": "Sentinel3A", "config": "bL2WeightSentinel3A", "Weight_RSR": Weight_RSR.Sentinel3Bands()},
         "S3B": {"name": "Sentinel3B", "config": "bL2WeightSentinel3B", "Weight_RSR": Weight_RSR.Sentinel3Bands()},
@@ -47,6 +54,7 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
         "VIIRS-J": {"name": "VIIRSJ", "config": "bL2WeightVIIRSJ", "Weight_RSR": Weight_RSR.VIIRSBands()},
     }  # list of avaialble sensors with their config file names a name for the xUNC key and associated Weight_RSR bands
 
+    # L1A sensors included by default
     sensors = ['ES', 'LI', 'LT']
 
     def __init__(self):
@@ -63,15 +71,25 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
 
     @abstractmethod
     def lightDarkStats(self, grp: Union[HDFGroup, dict[str, HDFGroup]], XSlice: dict, sensortype: str) -> dict[str, np.array]:
+        """abstract method to be used to calculate the statistics for a given sensor. Requires different methods for TriOS, HyperOCR and DALEC
+        due to how they manage dark pixels.
+        must return dictionary with following elements:
+            ave_Light: photon counts for light reading averaged across scans in cast,
+            ave_Dark:  photon counts for dark reading averaged across scans in cast,
+            std_Light: standard deviation (/sqrt(N)) of light counts across scans in cast,
+            std_Dark:  standard deviation of dark counts across scans in cast,
+            Signal_std: standard deviation of dark corrected signal in relative terms (divided by total signal),
+            Signal_noise: sqrt(std_light^2 + std_dark^2 / total signal^2),
+        """
         pass
 
     @staticmethod
     def get_interp_data(
             slice_dtimes_dict
-            # es_slice_dtimes,
-            # li_slice_dtimes,
-            # lt_slice_dtimes,
         ) -> np.array:
+        """
+        used to interpolate timestamps - important so glitter filter can be applied
+        """
         # Interpolate all datasets to the SLOWEST radiometric sampling rate
         esLength = len(slice_dtimes_dict['ES'])
         if ConfigFile.settings['SensorType'].lower() == 'trios es only':
@@ -101,7 +119,7 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
         "Raw" refers to uncalibrated L1AQC data.
 
         :return: dictionary of statistics used later in the processing pipeline. Keys are:
-        [ave_Light, ave_Dark, std_Light, std_Dark, std_Signal]
+        {ave_Light, ave_Dark, std_Light, std_Dark, Signal_std, Signal_noise}
         """
         stats = {}  # used tp store standard deviations and averages as a function return for generateSensorStats
         writeLogFileAndPrint("Interpolating raw data to common timestamps for uncertainty propagation.")
@@ -211,9 +229,11 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
                     {k: [lightData[k][i] for i in y] for k in lightData} if y is not None else lightData,
                     {k: [darkData[k][i] for i in y] for k in darkData} if (y is not None) and (darkData is not None) else darkData,
                     s_type,
-                ]
-                stats[s_type] = self.lightDarkStats(*[a for a in args if a is not None])
+                ]  # stores arguments for lightdarkstats method - this is necessary because abstract methods may have different input arguments
+                stats[s_type] = self.lightDarkStats(*[a for a in args if a is not None])  # calls self.lightDarkStats - 
+                # should call abstracted method will return error if used directly from BaseInstrument and not child class
             except (ValueError, IndexError, KeyError):
+                # catches errors and reports it to pdf
                 writeLogFileAndPrint("Could not generate statistics for the ensemble")
                 return False
 
@@ -248,7 +268,15 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
         :param stats: output of PIU.py BaseInstrument.generateSensorStats
 
         :return: dictionary of instrument uncertainties [Es uncertainty, Li uncertainty, Lt uncertainty]
-        alternatively errors in processing will return False for context management purposes.
+        
+        note:
+            alternatively errors in processing will return False for context management purposes.
+
+        desc:
+            Uses input uncertainties from other modules, instrument lab calibration and scientific knowledge to propagate 
+            combined total uncertainties through the HyperCP measurement function until Radiance and Irradiance, providing uncertainties
+            for ES, Li, and Lt. Measurement functions are defined in PIU.measurementFunctions.py. Makes use of methods defined in 
+            PIU.Uncertainty_Analysis.py which call comet_maths/punpy and provides methods from MeasurementFunctions.py as input.
         """
 
         # create object for running uncertainty propagation, M means number of monte carlo draws
@@ -262,9 +290,10 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
         #   based on a common set of pixels across all instruments for mathing with stats and PDS.
         PDS.l1ACommonCalPix = PDS.l1ACommonCalPix
         PDS.l1ACommonCalPix255 = PDS.l1ACommonCalPix255
-        ones   = np.ones_like(PDS.uncs['ES']['cal'])[PDS.l1ACommonCalPix]
-        zeroes = np.zeros_like(PDS.uncs['ES']['cal'])[PDS.l1ACommonCalPix]
+        ones   = np.ones_like(PDS.uncs['ES']['cal'])[PDS.l1ACommonCalPix]  # for characterisation corrections that aren't considered in CB processing
+        zeroes = np.zeros_like(PDS.uncs['ES']['cal'])[PDS.l1ACommonCalPix]  # for uncertainties that aren't considered
 
+        # list of numpy arrays - this is an imput to comet_maths for the uncertainty calculation of ES, LI, & LT
         means = [
             stats['ES']['ave_Light'][PDS.l1ACommonCalPix],
             stats['ES']['ave_Dark'][PDS.l1ACommonCalPix],
@@ -282,6 +311,7 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
             ones, ones, ones,
         ]
 
+        # list of numpy arrays containing the input uncertainties for calulating combined total uncertainty for ES, LI, & LT 
         uncertainties = [
             stats['ES']['std_Light'][PDS.l1ACommonCalPix],
             stats['ES']['std_Dark'][PDS.l1ACommonCalPix],
@@ -310,7 +340,7 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
         ]
 
         # generate uncertainties using Monte Carlo Propagation object
-        es_unc, li_unc, lt_unc = Prop_CB.propagate_Instrument_Uncertainty(means, uncertainties)
+        es_unc, li_unc, lt_unc = Prop_CB.propagate_Instrument_Uncertainty(means, uncertainties)  # returns absolute uncertainties in irradiance/radiance units
 
         # NOTE: Debugging check
         # is_negative = np.any([ x < 0 for x in means])
@@ -322,17 +352,17 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
         if any(es_unc < 0) or any(li_unc < 0) or any(lt_unc < 0):
             print('WARNING: Negative output uncertainties encountered in es, li, and/or lt.')
 
-        es, li, lt = Prop_CB.instruments(*means)
+        es, li, lt = Prop_CB.instruments(*means)  # returns estimation of es, li and lt signal for converting uncertainties to percentages (relative)
 
         # can set to be cumulative spectral plots
-        BD_UNCS = PlotMaths.classBased(Prop_CB, means, uncertainties, cul=False)
+        BD_UNCS = PlotMaths.classBased(Prop_CB, means, uncertainties, cul=False)  # calculate uncertainty breakdown components
 
         # # check if negative signal for any pixels
         # is_negative = np.any([ x < 0 for x in means])
         # if is_negative:
         #     print('WARNING: Negative uncertainty potential')
 
-        with warnings.catch_warnings():
+        with warnings.catch_warnings():  # ignore warnings to avoid clutter in command console
             warnings.filterwarnings("ignore", message="invalid value encountered in divide")
             warnings.filterwarnings("ignore", message="divide by zero encountered in divide")
 
@@ -344,7 +374,7 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
             # LI_unc = li_unc / np.abs(li)
             # LT_unc = lt_unc / np.abs(lt)
 
-            # then propagate perturbation uncertainty
+            # then propagate perturbation uncertainties - perturbation handled separately to other breakdown components
             pert_uncs = np.zeros_like(np.asarray(uncertainties))
             pert_uncs[0:6] = [
                 um.convertToAbsolute(stats['ES']["Signal_std"][PDS.l1ACommonCalPix], stats['ES']['ave_Light'][PDS.l1ACommonCalPix]),
@@ -360,6 +390,7 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
                 BD_UNCS['LT']['pert'],
             ) = Prop_CB.propagate_Instrument_Uncertainty(means, pert_uncs)
 
+            # like total uncertainty, broken down uncertainty components must also be converted to relative units (% of signal)
             BD_UNCS['ES'] = {k: um.convertToRelative(BD_UNCS['ES'][k], es) for k in BD_UNCS['ES']}  # convert all to relative units
             BD_UNCS['LI'] = {k: um.convertToRelative(BD_UNCS['LI'][k], li) for k in BD_UNCS['LI']}
             BD_UNCS['LT'] = {k: um.convertToRelative(BD_UNCS['LT'][k], lt) for k in BD_UNCS['LT']}
@@ -381,7 +412,7 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
                                            return_as_dict=True
             )
         )
-        if 'LI' in stats:
+        if 'LI' in stats:   # if not ES only then do interpolation of radiance signal
             rad_cal_str_li = "LI_RADCAL_CAL" if "LI_RADCAL_CAL" in uncGrp.datasets.keys() else "LI_RADCAL_UNC"
             cal_col_str_li = "1" if "LI_RADCAL_CAL" in uncGrp.datasets.keys() else "wvl"
             out['liUnc']=utils.interp_common_wvls(LI_unc,
@@ -432,6 +463,8 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
                 ) for k,v in BD_UNCS['LT'].items()
             }
 
+        # interpolation step is used to put uncertainties to common wavebands used for outputting all other L2 products. 
+        # We want the uncertainties (and breakdowns) to match the output spectrally to be meaningful
         return out, BD_UNCS
 
     def ClassBasedL2(self,
@@ -457,6 +490,10 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
             wavebands in xSlice are all L2 except those keyed "xxSTD_RAW"
 
         :return: dictionary of output uncertainties that are generated
+
+        desc:
+            the L2 uncertainty processing works identically to the L1A processing, however it propagates uncertainty through 
+            a measurement function which includes steps to convert ES, LI, & LT to LW, Rrs and NLW.
         """
 
         # create object for running uncertainty propagation, M means number of monte carlo draws
@@ -529,10 +566,14 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
                                          PDS.coeff[sensor]['radcal_wvl'][PDS.l1ACommonCalPix],
                                          l2Wavelength,
                                          return_as_dict=False)
-            PDSL2[f'{sensor}Ccal'] = utils.interp_common_wvls(PDS.coeff[sensor]['cal'][PDS.l1ACommonCalPix255],
-                                         PDS.coeff[sensor]['radcal_wvl'][PDS.l1ACommonCalPix],
-                                         l2Wavelength,
-                                         return_as_dict=False)
+            # Calibration coefficients and wavelengths are already stored
+            # on the calibrated-pixel grid by PIUDataStore.
+            PDSL2[f'{sensor}Ccal'] = utils.interp_common_wvls(
+                PDS.coeff[sensor]['cal'],
+                PDS.coeff[sensor]['radcal_wvl'],
+                l2Wavelength,
+                return_as_dict=False
+            )
         # Some PDS elements are at the reported/output bands, some at the full 255 pixels. Use masks accordingly.
         #   These are all at common pixels, regardless of the wavelength.
         # These are all at a common set of bands from raw ES at the common set of calibrated pixels
@@ -771,6 +812,9 @@ class BaseInstrument(ABC):  # Inheriting ABC allows for more function decorators
 
         :return: dictionary of output uncertainties that are generated
 
+        desc:
+            uses samples generated by FRM method in order to continue processing until Lw, Rrs and NLw by applying rho and f0. 
+            Requires PDFs for ES, LI, LT, rho, and f0
         """
 
         LPU = SolveLPU()

@@ -241,11 +241,13 @@ class ProcessL1b:
 
                     elif ConfigFile.settings["fL1bCal"] == 3:# sensor-specific
 
-                        # TODO: Decide which characterization file to use if not 'most_recent'
+                        # Choose most recent sensor-specific characterisation prior to acquisition
+                        chosen_file, idx = ProcessL1b.choose_cal_char_per_time(acq_time_seconds, available_files_calTime_seconds, available_files, rule='most_recent_prior_acquisition')
 
-                        # Choose most recent sensor-specific characterisation (this is regardless of measurement acquisition time)
-                        chosen_file, idx = ProcessL1b.choose_cal_char_per_time(
-                            acq_time_seconds, available_files_calTime_seconds, available_files, rule='most_recent')
+                        # If no file prior to acquisition, then choose closest in time!
+                        if chosen_file is None:
+                            chosen_file, idx = ProcessL1b.choose_cal_char_per_time(acq_time_seconds, available_files_calTime_seconds, available_files,rule='closest_in_time')
+
                         filing.read_char(chosen_file, gp)
                         gp.attributes[f'{sensorType}_{calCharType}_file'] = os.path.split(chosen_file)[-1]
 

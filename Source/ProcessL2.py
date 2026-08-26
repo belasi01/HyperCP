@@ -202,7 +202,7 @@ class ProcessL2:
             # Reverts to primary mode even on threshold trip in cases where no 870nm available
             if ρ1 < threshold or not ρ870:
                 ε = (α1*ρ2 - ρ1)/(α1-1)
-                εnLw = (α1*ρ2*F02 - ρ1*F01)/(α1-1)    
+                εnLw = (α1*ρ2*F02 - ρ1*F01)/(α1-1)
             else:
                 logging.writeLogFileAndPrint("SimSpec threshold tripped. Using 780/870 instead.")
                 ε = (α2*ρ3 - ρ2)/(α2-1)
@@ -1151,20 +1151,12 @@ class ProcessL2:
             'timeTag': dating.datetime2TimeTag2(mean_datetime)
         }
 
-        # %% Get standard deviation of slice (entire slice, not just the lowest X%)
         # Drop time info, for stats functions
         for k in data_slice.keys():
             del data_slice[k]['Datetime']
             del data_slice[k]['Datetag']
             del data_slice[k]['Timetag2']
         wavelengths = np.asarray(list(data_slice['ES'].keys()), dtype=float)
-
-        # if ConfigFile.settings["SensorType"].lower() == "seabird":
-        #     raw_groups = {k: d['LIGHT'] for k, d in raw_groups.items()}
-        #     for key, group in raw_groups.items():
-        #         group.id = f'{key}_L1AQC'
-        # # elif ConfigFile.settings["SensorType"].lower() != "dalec":
-        # #     # NOTE: Temporary placeholder for DALEC stats.
 
         # %% Convolve to satellite bands
         convolve_to_satellite, satellite_bands = {}, {}
@@ -1222,7 +1214,7 @@ class ProcessL2:
         # first_band = next(iter(ltSlice))
         # first_band_values = ltSlice[first_band]
         # y=list(range(0,len(first_band_values)))
-  
+
         stats = False
         while percent_lt <= 100:
             # Changed to 100% (no glitter filter) to allow sparser data to be processed
@@ -1252,7 +1244,6 @@ class ProcessL2:
             else:
                 nSpecEnd = nSpecStart
 
-
             stats = sensor.generateSensorStats(node, sensor_type, raw_groups, raw_slices, wavelengths, y)
 
             if isinstance(stats, bool):
@@ -1265,7 +1256,7 @@ class ProcessL2:
                 not all([v for v in stats.values()])):  # check if stats was generated and return False if not
             logging.writeLogFileAndPrint("statistics not (fully) generated")
             return False
-       
+
         node.attributes['PERCENT_LT'] = ",".join(percentLtattr)
         # %% Append Ensemble Size
         for grp in node.groups:
@@ -1431,7 +1422,7 @@ class ProcessL2:
                         es_ = np.array([v[0] for v in x_slice['es'].values()])
                         li_ = np.array([v[0] for v in x_slice['li'].values()])
                         lt_ = np.array([v[0] for v in x_slice['lt'].values()])
-                        
+
                     nlw = rrs * np.array(list(F0_hyper.values()))
 
                     # update breeakdown with L2 unc components
