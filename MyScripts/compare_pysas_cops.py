@@ -24,6 +24,11 @@ Usage:
     conda activate hypercp
     python compare_pysas_cops.py /path/to/Amundsen_2026/L2/20260808_StationCS1-1/
     python compare_pysas_cops.py <station_path> --symlink   # links instead of real copies
+    python compare_pysas_cops.py --all                      # every station with a cops/ folder
+    python compare_pysas_cops.py --station 20260808_StationCS1-1 --station 20260813_StationCS2-1
+    python compare_pysas_cops.py --all --rrs-pooled         # pooled Rrs comparison across all
+                                                              # stations, one set of stats/figure
+                                                              # (like GreenEdge's compare_hypersas_L3.py)
 """
 import os
 import sys
@@ -423,7 +428,7 @@ def plot_best_method_uncertainty(out_path, variant, best_method, cops_casts, cop
     plt.close(fig)
 
 
-def main(station_path, use_symlink=False):
+def main(station_path, use_symlink=False, window_pad_min=0.0):
     station_path = os.path.abspath(station_path)
     date_str = parse_station_date(station_path)
     station_label = os.path.basename(station_path)
@@ -433,8 +438,15 @@ def main(station_path, use_symlink=False):
     window_start = min(c["start"] for c in casts)
     window_end = max(c["end"] for c in casts)
     cops_means = {variant: average_cops_rrs(casts, variant) for variant in COPS_VARIANTS}
-    print(f"📍 {station_label} | fenêtre COPS UTC : {window_start} -> {window_end} "
-          f"({len(casts)} cast(s) retenu(s))")
+    if window_pad_min:
+        pad = pd.Timedelta(minutes=window_pad_min)
+        window_start -= pad
+        window_end += pad
+        print(f"📍 {station_label} | fenêtre COPS UTC : {window_start} -> {window_end} "
+              f"({len(casts)} cast(s) retenu(s), fenêtre étendue de +/-{window_pad_min:g} min)")
+    else:
+        print(f"📍 {station_label} | fenêtre COPS UTC : {window_start} -> {window_end} "
+              f"({len(casts)} cast(s) retenu(s))")
 
     df_window = find_pysas_casts_in_window(date_str, window_start, window_end)
     if df_window.empty:
@@ -599,9 +611,11 @@ def load_pysas_es_series(date_str, window_start, window_end):
 
 
 def load_pysas_ancillary_series(date_str, window_start, window_end):
-    """SZA (et Li(750)/Es(750) comme indicateur de nébulosité, même formule que
-    extract_l2_qc_tables.py/detect_ship_shadow.py) par scan, pour contextualiser
-    chaque bin Ed0/Es -- teste l'hypothèse ciel dégagé + SZA élevé -> écart plus fort."""
+    """SZA, TILT (roulis/tangage combinés, degrés) et Li(750)/Es(750) comme indicateur
+    de nébulosité (même formule que extract_l2_qc_tables.py/detect_ship_shadow.py) par
+    scan, pour contextualiser chaque bin Ed0/Es -- teste l'hypothèse ciel dégagé + SZA
+    élevé -> écart plus fort, et l'hypothèse sensibilité cosinus -> dispersion liée au
+    tangage/roulis du navire plutôt qu'au SZA lui-même."""
     pattern = os.path.join(rea.BASE_PATH, "L1BQC", f"*{date_str}*_L1BQC.hdf")
     frames = []
     for fp in sorted(glob.glob(pattern)):
@@ -620,6 +634,10 @@ def load_pysas_ancillary_series(date_str, window_start, window_end):
                 continue
             sza = sza_raw["SZA"][mask]
 
+            tilt = np.full(mask.sum(), np.nan)
+            if "/ANCILLARY/TILT" in h5f:
+                tilt = h5f["/ANCILLARY/TILT"]["TILT"][...][mask]
+
             cloud_ratio = np.full(mask.sum(), np.nan)
             if "/IRRADIANCE/ES" in h5f and "/RADIANCE/LI" in h5f:
                 from scipy.interpolate import interp1d
@@ -633,9 +651,10 @@ def load_pysas_ancillary_series(date_str, window_start, window_end):
                     with np.errstate(divide="ignore", invalid="ignore"):
                         cloud_ratio = np.where(es750 != 0, li750 / es750, np.nan)
 
-            frames.append(pd.DataFrame({"Datetime": times[mask], "SZA": sza, "CloudRatio": cloud_ratio}))
+            frames.append(pd.DataFrame({"Datetime": times[mask], "SZA": sza, "TILT": tilt,
+                                         "CloudRatio": cloud_ratio}))
     if not frames:
-        return pd.DataFrame(columns=["Datetime", "SZA", "CloudRatio"])
+        return pd.DataFrame(columns=["Datetime", "SZA", "TILT", "CloudRatio"])
     return pd.concat(frames, ignore_index=True)
 
 
@@ -671,8 +690,8 @@ def match_ed0_es(cops_dir, date_str, label, band_width=BAND_WIDTH_NM, bin_second
         return pd.DataFrame()
 
     anc_df = load_pysas_ancillary_series(date_str, window_start, window_end)
-    anc_binned = bin_5s(anc_df, group_cols=[], value_cols=["SZA", "CloudRatio"], bin_seconds=bin_seconds) \
-        if not anc_df.empty else pd.DataFrame(columns=["Bin", "SZA", "CloudRatio"])
+    anc_binned = bin_5s(anc_df, group_cols=[], value_cols=["SZA", "TILT", "CloudRatio"], bin_seconds=bin_seconds) \
+        if not anc_df.empty else pd.DataFrame(columns=["Bin", "SZA", "TILT", "CloudRatio"])
 
     ed0_binned = bin_5s(ed0_df, group_cols=["Wavelength"], value_cols=["Ed0"], bin_seconds=bin_seconds)
     ed0_binned = ed0_binned.rename(columns={"Wavelength": "Wavelength_COPS"})
@@ -713,6 +732,16 @@ def match_ed0_es_for_station(station_path, band_width=BAND_WIDTH_NM, bin_seconds
     return match_ed0_es(cops_dir, date_str, label, band_width=band_width, bin_seconds=bin_seconds)
 
 
+# Palette catégorielle (dataviz skill: références/palette.md) -- 3 séries identité
+# (biais global / ciel dégagé / nuageux), teintes fixes 1-2-3, jamais recyclées.
+_CAT_BLUE = "#2a78d6"
+_CAT_ORANGE = "#eb6834"
+_CAT_AQUA = "#1baf7a"
+_INK_SECONDARY = "#52514e"
+_GRIDLINE = "#e1e0d9"
+_CHART_SURFACE = "#fcfcfb"
+
+
 def plot_ed0_es_per_wavelength(df, out_dir, label="toutes stations"):
     """Un scatterplot Es (pySAS) vs Ed0 (COPS) par longueur d'onde COPS, coloré par
     SZA -- pour vérifier l'hypothèse Es > Ed0, écart plus fort à ciel dégagé + SZA
@@ -741,12 +770,24 @@ def plot_ed0_es_per_wavelength(df, out_dir, label="toutes stations"):
         diff = sub["Es"] - sub["Ed0"]
         ratio = sub["Es"] / sub["Ed0"]
         clear = sub["CloudRatio"] < 0.05
+
+        def _corr(mask):
+            m = mask & sub["SZA"].notna()
+            if m.sum() <= 2:
+                return None
+            return float(np.corrcoef(sub.loc[m, "SZA"], diff[m])[0, 1])
+
+        all_mask = pd.Series(True, index=sub.index)
         stats_rows.append({
             "Wavelength_COPS": wl, "N": len(sub),
             "Bias_Es-Ed0": float(diff.mean()), "Ratio_Es/Ed0": float(ratio.mean()),
-            "Corr_diff_vs_SZA": float(np.corrcoef(sub["SZA"], diff)[0, 1]) if sub["SZA"].notna().sum() > 2 else None,
+            "Corr_diff_vs_SZA": _corr(all_mask),
             "Bias_clear_sky": float(diff[clear].mean()) if clear.any() else None,
             "Bias_cloudy": float(diff[~clear].mean()) if (~clear).any() else None,
+            "Ratio_clear_sky": float(ratio[clear].mean()) if clear.any() else None,
+            "Ratio_cloudy": float(ratio[~clear].mean()) if (~clear).any() else None,
+            "Corr_clear_sky": _corr(clear),
+            "Corr_cloudy": _corr(~clear),
         })
 
     for ax in axes.flat[n:]:
@@ -766,17 +807,78 @@ def plot_ed0_es_per_wavelength(df, out_dir, label="toutes stations"):
     print(df_stats.to_string(index=False))
 
     plot_stats_vs_wavelength(df_stats, out_dir, label=label)
+    df_plot = df.copy()
+    df_plot["cos_SZA"] = np.cos(np.radians(df_plot["SZA"]))
+    plot_ratio_vs_x_clear_sky(df_plot, out_dir, "SZA", "SZA (°)", "Ratio_vs_SZA_clear_sky.png",
+                               label=label, slope_unit="/°")
+    plot_ratio_vs_x_clear_sky(df_plot, out_dir, "cos_SZA", "cos(SZA)", "Ratio_vs_cosSZA_clear_sky.png",
+                               label=label, slope_unit="")
+    if "TILT" in df_plot.columns and df_plot["TILT"].notna().any():
+        plot_ratio_vs_x_clear_sky(df_plot, out_dir, "TILT", "Tangage/roulis combinés (°)",
+                                   "Ratio_vs_TILT_clear_sky.png", label=label, color_by="SZA",
+                                   slope_unit="/°")
     return df_stats
 
 
-# Palette catégorielle (dataviz skill: références/palette.md) -- 3 séries identité
-# (biais global / ciel dégagé / nuageux), teintes fixes 1-2-3, jamais recyclées.
-_CAT_BLUE = "#2a78d6"
-_CAT_ORANGE = "#eb6834"
-_CAT_AQUA = "#1baf7a"
-_INK_SECONDARY = "#52514e"
-_GRIDLINE = "#e1e0d9"
-_CHART_SURFACE = "#fcfcfb"
+def plot_ratio_vs_x_clear_sky(df, out_dir, x_col, x_label, filename, label="toutes stations",
+                               cloud_threshold=0.05, color_by=None, slope_unit=""):
+    """Scatterplot Ratio Es/Ed0 (par bin) vs une variable explicative (SZA, cos(SZA) ou
+    TILT), un panneau par longueur d'onde COPS, restreint au ciel dégagé
+    (CloudRatio < cloud_threshold) -- pour visualiser directement si l'écart Es/Ed0 se
+    creuse avec le SZA / sa composante cosinus / le tangage-roulis du navire, sans passer
+    par les stats agrégées de plot_stats_vs_wavelength. Une droite de régression linéaire
+    par panneau indique la tendance (pente affichée). color_by permet de colorer les
+    points par une 3e variable (ex. SZA sur le graphe vs TILT) pour repérer les
+    confusions entre variables explicatives."""
+    dropna_cols = ["Ed0", "Es", x_col] + ([color_by] if color_by else [])
+    sub_all = df[df["CloudRatio"] < cloud_threshold].dropna(subset=dropna_cols)
+    if sub_all.empty:
+        print(f"⚠️  [{label}] Aucun bin ciel dégagé (CloudRatio < {cloud_threshold}) -- "
+              f"figure Ratio vs {x_col} non générée.")
+        return
+
+    wavelengths = sorted(sub_all["Wavelength_COPS"].unique())
+    n = len(wavelengths)
+    ncols = 4
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2 * ncols, 3.8 * nrows),
+                              squeeze=False, facecolor=_CHART_SURFACE, constrained_layout=True)
+
+    sc = None
+    for ax, wl in zip(axes.flat, wavelengths):
+        ax.set_facecolor(_CHART_SURFACE)
+        sub = sub_all[sub_all["Wavelength_COPS"] == wl]
+        ratio = sub["Es"] / sub["Ed0"]
+        if color_by:
+            sc = ax.scatter(sub[x_col], ratio, c=sub[color_by], cmap="plasma", s=10, alpha=0.6)
+        else:
+            ax.scatter(sub[x_col], ratio, color=_CAT_BLUE, s=10, alpha=0.5)
+        ax.axhline(1, color=_INK_SECONDARY, linewidth=0.8, linestyle="--")
+
+        if sub[x_col].nunique() > 1:
+            slope, intercept = np.polyfit(sub[x_col], ratio, 1)
+            x_fit = np.array([sub[x_col].min(), sub[x_col].max()])
+            ax.plot(x_fit, slope * x_fit + intercept, color=_CAT_ORANGE, linewidth=2)
+            ax.text(0.05, 0.05, f"pente={slope:+.4f}{slope_unit}", transform=ax.transAxes,
+                    fontsize=8, color=_CAT_ORANGE, va="bottom")
+
+        ax.set_title(f"{wl:.0f} nm (n={len(sub)})", fontsize=9)
+        ax.tick_params(labelsize=7)
+        ax.grid(True, linestyle="--", color=_GRIDLINE)
+
+    for ax in axes.flat[n:]:
+        ax.axis("off")
+
+    fig.supxlabel(x_label)
+    fig.supylabel("Ratio Es/Ed0")
+    fig.suptitle(f"Ratio Es/Ed0 vs {x_label} -- ciel dégagé seulement (CloudRatio < {cloud_threshold}) -- {label}",
+                 fontweight="bold")
+    if color_by and sc is not None:
+        fig.colorbar(sc, ax=axes, shrink=0.6, label=color_by)
+    out_path = os.path.join(out_dir, filename)
+    fig.savefig(out_path, dpi=150, facecolor=_CHART_SURFACE)
+    plt.close(fig)
+    print(f"📊 Figure : {out_path}")
 
 
 def plot_stats_vs_wavelength(df_stats, out_dir, label="toutes stations"):
@@ -800,16 +902,22 @@ def plot_stats_vs_wavelength(df_stats, out_dir, label="toutes stations"):
     ax = axes[1]
     ax.set_facecolor(_CHART_SURFACE)
     ax.axhline(1, color=_INK_SECONDARY, linewidth=0.8)
-    ax.plot(wl, df_stats["Ratio_Es/Ed0"], color=_CAT_BLUE, marker="o", linewidth=2)
+    ax.plot(wl, df_stats["Ratio_Es/Ed0"], color=_CAT_BLUE, marker="o", linewidth=2, label="Ratio global")
+    ax.plot(wl, df_stats["Ratio_clear_sky"], color=_CAT_ORANGE, marker="o", linewidth=2, label="Ciel dégagé")
+    ax.plot(wl, df_stats["Ratio_cloudy"], color=_CAT_AQUA, marker="o", linewidth=2, label="Nuageux")
     ax.set_ylabel("Ratio Es/Ed0")
+    ax.legend(fontsize=8)
     ax.grid(True, linestyle="--", color=_GRIDLINE)
 
     ax = axes[2]
     ax.set_facecolor(_CHART_SURFACE)
     ax.axhline(0, color=_INK_SECONDARY, linewidth=0.8)
-    ax.plot(wl, df_stats["Corr_diff_vs_SZA"], color=_CAT_BLUE, marker="o", linewidth=2)
+    ax.plot(wl, df_stats["Corr_diff_vs_SZA"], color=_CAT_BLUE, marker="o", linewidth=2, label="Corrélation globale")
+    ax.plot(wl, df_stats["Corr_clear_sky"], color=_CAT_ORANGE, marker="o", linewidth=2, label="Ciel dégagé")
+    ax.plot(wl, df_stats["Corr_cloudy"], color=_CAT_AQUA, marker="o", linewidth=2, label="Nuageux")
     ax.set_ylabel("Corrélation (Es-Ed0) vs SZA")
     ax.set_xlabel("Longueur d'onde COPS (nm)")
+    ax.legend(fontsize=8)
     ax.grid(True, linestyle="--", color=_GRIDLINE)
 
     fig.suptitle(f"Ed0 vs Es -- statistiques spectrales -- {label}", fontweight="bold")
@@ -820,17 +928,623 @@ def plot_stats_vs_wavelength(df_stats, out_dir, label="toutes stations"):
     print(f"📊 Figure : {out_path}")
 
 
+_STATION_MARKERS = ["o", "s", "^", "v", "D", "P", "X", "*", "h", "<", ">", "p", "8"]
+
+# Sous-ensemble des 7 méthodes pySAS jugé pertinent pour la comparaison poolée (les
+# variantes "NN" sans correction NIR/SimSpec sont exclues, sauf 3CNN qui n'a pas
+# d'équivalent NIR/SimSpec -- voir rea.METHODS).
+RRS_L3_METHODS = ["M99NIR", "M99SimSpec", "Z17NIR", "Z17SimSpec", "3CNN"]
+
+
+def _fit_stats(x, y):
+    """Biais/RMSD/R² (y-x) pour un ensemble de points appariés."""
+    bias = float(np.mean(y - x))
+    rmsd = float(np.sqrt(np.mean((y - x) ** 2)))
+    r2 = float(np.corrcoef(x, y)[0, 1] ** 2) if len(x) > 1 else np.nan
+    return bias, rmsd, r2
+
+
+def _log_fit_stats(x, y):
+    """Mêmes stats que _fit_stats mais sur log10(x)/log10(y) -- pondère davantage les
+    faibles Rrs (NIR) qu'une régression linéaire, où les grandes valeurs (bleu-vert)
+    dominent la somme des carrés. Ne garde que les paires strictement positives (un
+    Rrs pySAS proche de zéro/négatif, bruit dans le NIR, n'a pas de log défini)."""
+    x, y = np.asarray(x), np.asarray(y)
+    mask = (x > 0) & (y > 0)
+    n = int(mask.sum())
+    if n < 2:
+        return np.nan, np.nan, np.nan, n
+    bias, rmsd, r2 = _fit_stats(np.log10(x[mask]), np.log10(y[mask]))
+    return bias, rmsd, r2, n
+
+
+def _cops_l3_variant_choice(cops_dir):
+    """Lit le 3e champ de select.cops.dat (ex. "Rrs.0p.linear", "Rrs.0p.loess", ou juste
+    "Rrs.0p" pour les casts traités avant l'ajout de l'extrapolation loess -> "linear"
+    par défaut) -> {filename: "linear"|"loess"}, le choix final retenu pour le Rrs COPS
+    de niveau 3 (L3) de ce cast lors du contrôle qualité -- pas les deux variantes
+    explorées uniformément par average_cops_rrs()/COPS_VARIANTS."""
+    select_path = os.path.join(cops_dir, "select.cops.dat")
+    choice = {}
+    with open(select_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(";")
+            if len(parts) < 3 or parts[1].strip() != "1":
+                continue
+            choice[parts[0].strip()] = "loess" if parts[2].strip().endswith("loess") else "linear"
+    return choice
+
+
+def average_cops_rrs_l3(casts, cops_dir):
+    """Spectre Rrs COPS de niveau 3 (L3) moyenné sur les casts retenus, chacun avec sa
+    propre variante d'extrapolation (linear/loess) choisie lors du contrôle qualité --
+    voir _cops_l3_variant_choice(). C'est la référence "un choix final par cast", par
+    opposition à average_cops_rrs() qui compare les deux variantes uniformément."""
+    choice = _cops_l3_variant_choice(cops_dir)
+    wl_ref = casts[0]["wavelength"]
+    specs = []
+    for c in casts:
+        variant = choice.get(c["file"], "linear")
+        key = f"rrs_{variant}"
+        if key in c and np.array_equal(c["wavelength"], wl_ref):
+            specs.append(c[key])
+        else:
+            print(f"⚠️  {c['file']}: spectre L3 ({variant}) indisponible -- ignoré dans la moyenne.")
+    if not specs:
+        raise ValueError("Aucun spectre Rrs L3 exploitable parmi les casts retenus.")
+    return wl_ref, np.nanmean(np.vstack(specs), axis=0)
+
+
+# Longueur d'onde utilisée comme indicateur de turbidité (voir find_turbidity_threshold)
+# -- point exact de la grille COPS, pas d'interpolation nécessaire.
+TURBIDITY_WAVELENGTH_NM = 665.0
+
+
+def station_rrs665_l3(station_path):
+    """Rrs COPS L3 à 665 nm pour une station -- indicateur de turbidité utilisé par
+    find_turbidity_threshold pour décider NIR (eau claire) vs SimSpec (eau turbide,
+    où l'hypothèse Rrs(NIR)~0 de la correction NIR n'est plus valide)."""
+    cops_dir = find_cops_dir(station_path)
+    casts = load_selected_cops_casts(cops_dir)
+    cops_wl, cops_rrs = average_cops_rrs_l3(casts, cops_dir)
+    idx = int(np.argmin(np.abs(cops_wl - TURBIDITY_WAVELENGTH_NM)))
+    return float(cops_rrs[idx])
+
+
+def rrs_points_for_station(station_path, window_pad_min=0.0):
+    """Points spectraux bruts (COPS L3, pySAS) pour une station -- coeur de
+    compare_rrs_pooled, équivalent CASCADE de compare_hypersas_L3.py dans le projet
+    GreenEdge (référence L3 = choix final linear/loess par cast, méthodes pySAS
+    limitées à RRS_L3_METHODS -- contrairement à main()/plot_scatter_and_stats qui
+    comparent les deux variantes COPS et les 7 méthodes pySAS, pour l'exploration
+    station par station). Retourne un DataFrame long [Station, Méthode, Longueur
+    d'onde, COPS, pySAS], ou None si indisponible (pas de cops/, pas de cast pySAS
+    dans la fenêtre, etc.)."""
+    station_path = os.path.abspath(station_path)
+    date_str = parse_station_date(station_path)
+    label = os.path.basename(station_path)
+
+    cops_dir = find_cops_dir(station_path)
+    casts = load_selected_cops_casts(cops_dir)
+    window_start = min(c["start"] for c in casts)
+    window_end = max(c["end"] for c in casts)
+    if window_pad_min:
+        pad = pd.Timedelta(minutes=window_pad_min)
+        window_start -= pad
+        window_end += pad
+    cops_wl, cops_rrs = average_cops_rrs_l3(casts, cops_dir)
+
+    df_window = find_pysas_casts_in_window(date_str, window_start, window_end)
+    if df_window.empty:
+        return None
+    pysas_wl, pysas_specs = gather_pysas_spectra(df_window)
+    if pysas_wl is None:
+        return None
+
+    rows = []
+    for method in RRS_L3_METHODS:
+        method_casts = pysas_specs.get(method) or []
+        if not method_casts:
+            continue
+        mean_spec = np.nanmean(np.vstack(method_casts), axis=0)
+        resampled = np.interp(cops_wl, pysas_wl, mean_spec)
+        mask = ~np.isnan(resampled) & ~np.isnan(cops_rrs)
+        if mask.sum() < 2:
+            continue
+        for wl, x, y in zip(cops_wl[mask], cops_rrs[mask], resampled[mask]):
+            rows.append({
+                "Station": label, "Méthode": method,
+                "Longueur d'onde": float(wl), "COPS": float(x), "pySAS": float(y),
+            })
+    return pd.DataFrame(rows) if rows else None
+
+
+def plot_rrs_pooled_scatter(df, out_fig_path):
+    """Un seul panneau (référence = COPS L3), couleur = méthode pySAS via
+    rea.METHOD_COLORS, marqueur = station (identité secondaire nécessaire ici puisqu'on
+    poole plusieurs stations). Voir aussi plot_rrs_pooled_scatter_by_wavelength() pour
+    la variante un-panneau-par-méthode/couleur=longueur d'onde (convention GreenEdge)."""
+    stations = sorted(df["Station"].unique())
+    marker_of = {s: _STATION_MARKERS[i % len(_STATION_MARKERS)] for i, s in enumerate(stations)}
+    methods_present = [m for m in RRS_L3_METHODS if m in df["Méthode"].unique()]
+
+    fig, ax = plt.subplots(figsize=(7, 7))
+    all_vals = [df["COPS"].to_numpy()]
+    for method in methods_present:
+        g = df[df["Méthode"] == method]
+        color = rea.METHOD_COLORS[method]
+        for station in stations:
+            gs = g[g["Station"] == station]
+            if gs.empty:
+                continue
+            ax.scatter(gs["COPS"], gs["pySAS"], color=color, marker=marker_of[station],
+                      s=40, alpha=0.8, edgecolors="none")
+        all_vals.append(g["pySAS"].to_numpy())
+
+    all_vals = np.concatenate(all_vals)
+    lims = [float(np.nanmin(all_vals)), float(np.nanmax(all_vals))]
+    pad = 0.05 * (lims[1] - lims[0]) if lims[1] > lims[0] else 0.01
+    lims = [lims[0] - pad, lims[1] + pad]
+    ax.plot(lims, lims, color="black", linestyle="--", linewidth=1)
+    ax.set_xlim(lims)
+    ax.set_ylim(lims)
+    ax.set_xlabel(r"$R_{rs}$ COPS L3 (sr$^{-1}$)")
+    ax.set_ylabel(r"$R_{rs}$ pySAS (sr$^{-1}$)")
+    ax.set_title(f"pySAS vs COPS L3 -- {len(stations)} station(s) poolées")
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    method_handles = [plt.Line2D([0], [0], marker="o", color=rea.METHOD_COLORS[m], linestyle="",
+                                 markersize=8, label=m) for m in methods_present]
+    method_handles.append(plt.Line2D([0], [0], color="black", linestyle="--", linewidth=1, label="1:1"))
+    station_handles = [plt.Line2D([0], [0], marker=marker_of[s], color="dimgray", linestyle="",
+                                  markersize=8, label=s) for s in stations]
+    fig.legend(handles=method_handles, loc="upper center", ncol=min(8, len(method_handles)),
+               fontsize=8, bbox_to_anchor=(0.5, 1.1), title="Méthode (couleur)")
+    fig.legend(handles=station_handles, loc="lower center", ncol=min(8, len(station_handles)),
+               fontsize=7, bbox_to_anchor=(0.5, -0.12), title="Station (marqueur)")
+
+    fig.savefig(out_fig_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_rrs_pooled_scatter_by_wavelength(df, out_dir):
+    """Une figure par méthode pySAS (Rrs_pooled_scatter_by_wavelength_<méthode>.png),
+    couleur = longueur d'onde (viridis, encodage magnitude/ordre) et marqueur = station
+    (identité, encodage secondaire) -- même convention que Scatter_vs_L3_pooled.png
+    dans le projet GreenEdge (compare_hypersas_L3.py), mais une figure par méthode
+    plutôt qu'un seul panneau multi-méthodes. Même échelle de couleur (vmin/vmax) sur
+    toutes les figures pour rester comparables. Retourne la liste des chemins écrits."""
+    stations = sorted(df["Station"].unique())
+    marker_of = {s: _STATION_MARKERS[i % len(_STATION_MARKERS)] for i, s in enumerate(stations)}
+    methods_present = [m for m in RRS_L3_METHODS if m in df["Méthode"].unique()]
+    wl_min, wl_max = float(df["Longueur d'onde"].min()), float(df["Longueur d'onde"].max())
+
+    out_paths = []
+    for method in methods_present:
+        g = df[df["Méthode"] == method]
+        x, y = g["COPS"].to_numpy(), g["pySAS"].to_numpy()
+        wl, station = g["Longueur d'onde"].to_numpy(), g["Station"].to_numpy()
+        method_stations = sorted(g["Station"].unique())
+
+        fig, ax = plt.subplots(figsize=(8, 7))
+        scatter_ref = None
+        for s in method_stations:
+            sel = station == s
+            if not sel.any():
+                continue
+            scatter_ref = ax.scatter(
+                x[sel], y[sel], c=wl[sel], cmap="viridis", vmin=wl_min, vmax=wl_max,
+                marker=marker_of[s], s=45, alpha=0.85, edgecolors="none",
+            )
+        lims = [min(x.min(), y.min()), max(x.max(), y.max())]
+        pad = 0.05 * (lims[1] - lims[0]) if lims[1] > lims[0] else 0.01
+        lims = [lims[0] - pad, lims[1] + pad]
+        ax.plot(lims, lims, "k--", linewidth=1, label="1:1")
+        ax.set_xlim(lims)
+        ax.set_ylim(lims)
+        ax.set_xlabel(r"$R_{rs}$ COPS L3 (sr$^{-1}$)")
+        ax.set_ylabel(rf"$R_{{rs}}$ pySAS {method} (sr$^{{-1}}$)")
+        ax.set_title(f"{method} vs COPS L3 ({len(method_stations)} stations)")
+        ax.grid(True, linestyle="--", alpha=0.4)
+
+        bias, rmsd, r2 = _fit_stats(x, y)
+        log_bias, log_rmsd, log_r2, n_log = _log_fit_stats(x, y)
+        stats_text = (
+            f"linéaire (N={len(x)})\n"
+            f"  Biais = {bias:.5f}\n"
+            f"  RMSD = {rmsd:.5f}\n"
+            f"  R² = {r2:.4f}\n"
+            f"log10 (N={n_log})\n"
+            f"  Biais = {log_bias:.4f}\n"
+            f"  RMSD = {log_rmsd:.4f}\n"
+            f"  R² = {log_r2:.4f}"
+        )
+        ax.text(0.03, 0.97, stats_text, transform=ax.transAxes, ha="left", va="top",
+                fontsize=8.5, bbox=dict(facecolor="white", alpha=0.85, edgecolor="lightgray"))
+
+        station_handles = [
+            plt.Line2D([0], [0], marker=marker_of[s], color="dimgray", linestyle="", markersize=8, label=s)
+            for s in method_stations
+        ]
+        station_handles.append(plt.Line2D([0], [0], color="black", linestyle="--", linewidth=1, label="1:1"))
+        fig.legend(handles=station_handles, loc="lower center", ncol=min(6, len(station_handles)),
+                   fontsize=8, bbox_to_anchor=(0.5, -0.12))
+
+        if scatter_ref is not None:
+            cbar = fig.colorbar(scatter_ref, ax=ax, orientation="vertical", fraction=0.046, pad=0.03)
+            cbar.set_label("Longueur d'onde (nm)")
+
+        out_path = os.path.join(out_dir, f"Rrs_pooled_scatter_by_wavelength_{method}.png")
+        fig.savefig(out_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        out_paths.append(out_path)
+    return out_paths
+
+
+def collect_rrs_pooled_points(station_paths, window_pad_min=0.0):
+    """Concatène rrs_points_for_station() sur toutes les stations fournies -- coeur
+    partagé entre compare_rrs_pooled et find_turbidity_threshold. Retourne None si
+    aucune station n'a de match COPS/pySAS exploitable."""
+    frames = []
+    for station_path in station_paths:
+        label = os.path.basename(os.path.normpath(station_path))
+        try:
+            df = rrs_points_for_station(station_path, window_pad_min=window_pad_min)
+        except Exception as e:
+            print(f"❌ [{label}] {e}")
+            continue
+        if df is None:
+            print(f"⚠️  [{label}] Aucun point Rrs exploitable (pas de match COPS/pySAS).")
+            continue
+        frames.append(df)
+        print(f"📍 [{label}] {len(df)} point(s) spectral(aux)")
+
+    if not frames:
+        return None
+    return pd.concat(frames, ignore_index=True)
+
+
+def compare_rrs_pooled(station_paths, out_dir, window_pad_min=0.0):
+    """Point d'entrée agrégé pour la comparaison Rrs (comme compare_ed0_es pour Ed0/Es)
+    -- équivalent CASCADE de compare_hypersas_L3.py (GreenEdge) : stats et scatterplot
+    combinant TOUTES les stations fournies avec un match COPS/pySAS, référence = Rrs
+    COPS L3 (choix final linear/loess par cast -- voir average_cops_rrs_l3), méthodes
+    pySAS limitées à RRS_L3_METHODS. Pour juger quelle méthode de correction du ciel
+    suit le mieux COPS dans l'ensemble (plus de puissance statistique qu'une
+    comparaison station par station -- voir main())."""
+    os.makedirs(out_dir, exist_ok=True)
+    df_all = collect_rrs_pooled_points(station_paths, window_pad_min=window_pad_min)
+    if df_all is None:
+        print("⚠️  Aucun point Rrs poolé sur les stations fournies.")
+        return
+
+    points_csv = os.path.join(out_dir, "Rrs_pooled_points.csv")
+    df_all.to_csv(points_csv, index=False)
+    print(f"\n📋 Points bruts : {points_csv}")
+
+    stats_rows = []
+    for method, g in df_all.groupby("Méthode"):
+        x, y = g["COPS"].to_numpy(), g["pySAS"].to_numpy()
+        bias, rmsd, r2 = _fit_stats(x, y)
+        log_bias, log_rmsd, log_r2, n_log = _log_fit_stats(x, y)
+        stats_rows.append({
+            "Méthode": method, "N": len(x), "N_stations": int(g["Station"].nunique()),
+            "Biais (pySAS-COPS)": round(bias, 5), "RMSD": round(rmsd, 5),
+            "R²": round(r2, 4) if np.isfinite(r2) else None,
+            "N_log10": n_log,
+            "Biais_log10 (pySAS-COPS)": round(log_bias, 5) if np.isfinite(log_bias) else None,
+            "RMSD_log10": round(log_rmsd, 5) if np.isfinite(log_rmsd) else None,
+            "R²_log10": round(log_r2, 4) if np.isfinite(log_r2) else None,
+        })
+    df_stats = pd.DataFrame(stats_rows).sort_values("RMSD")
+    stats_csv = os.path.join(out_dir, "Rrs_pooled_stats.csv")
+    df_stats.to_csv(stats_csv, index=False)
+    print(f"\n=== Stats poolées vs COPS L3 ({df_all['Station'].nunique()} station(s), toutes longueurs d'onde) ===")
+    print(df_stats.to_string(index=False))
+    print(f"\n📋 Stats : {stats_csv}")
+
+    best_method = df_stats.iloc[0]["Méthode"]
+    best_method_log = df_stats.sort_values("RMSD_log10").iloc[0]["Méthode"]
+    print(f"🏆 Meilleure méthode vs COPS L3 (poolé, RMSD linéaire) : {best_method}")
+    print(f"🏆 Meilleure méthode vs COPS L3 (poolé, RMSD log10) : {best_method_log}")
+    if best_method == best_method_log:
+        print(f"✅ Même classement en linéaire et en log10 -- {best_method} en tête dans les deux cas.")
+    else:
+        print(f"⚠️  Classement différent selon l'échelle : {best_method} (linéaire) vs {best_method_log} (log10).")
+
+    fig_path = os.path.join(out_dir, "Rrs_pooled_scatter.png")
+    plot_rrs_pooled_scatter(df_all, fig_path)
+    print(f"📊 Scatterplot poolé (couleur = méthode) : {fig_path}")
+
+    fig_wl_paths = plot_rrs_pooled_scatter_by_wavelength(df_all, out_dir)
+    print("📊 Scatterplots poolés (couleur = longueur d'onde, 1 figure/méthode) :")
+    for p in fig_wl_paths:
+        print(f"   {p}")
+
+    if "Z17NIR" in df_all["Méthode"].unique() and "Z17SimSpec" in df_all["Méthode"].unique():
+        df_hybrid, chosen = rrs_points_hybrid_z17(df_all)
+        n_simspec = sum(1 for m in chosen.values() if m == "Z17SimSpec")
+        print(f"\n=== Règle hybride Z17 (Rrs665 pySAS Z17NIR > {Z17_HYBRID_THRESHOLD_PYSAS:.0e} -> SimSpec) ===")
+        print(f"  {n_simspec} station(s) turbide(s) (SimSpec) / {len(chosen) - n_simspec} claire(s) (NIR)")
+        for station in sorted(chosen):
+            print(f"   {station}: {chosen[station]}")
+        fig_hybrid_path = os.path.join(out_dir, "Rrs_pooled_scatter_by_wavelength_Z17Hybrid.png")
+        plot_rrs_hybrid_scatter(df_hybrid, Z17_HYBRID_THRESHOLD_PYSAS, fig_hybrid_path)
+        print(f"📊 Scatterplot poolé (Z17 hybride) : {fig_hybrid_path}")
+
+
+# Familles de méthode testées par find_turbidity_threshold (chacune a une variante NIR
+# et SimSpec -- 3CNN n'en a pas, donc hors règle).
+TURBIDITY_FAMILIES = ["M99", "Z17"]
+
+
+def _hybrid_points(df_all, family, rrs665_by_station, threshold):
+    """Sous-ensemble de df_all où chaque station est assignée à <family>SimSpec (Rrs665
+    > threshold, jugée turbide) ou <family>NIR (sinon) -- la règle testée par
+    find_turbidity_threshold."""
+    nir_method, simspec_method = f"{family}NIR", f"{family}SimSpec"
+    parts = []
+    for station, rrs665 in rrs665_by_station.items():
+        method = simspec_method if rrs665 > threshold else nir_method
+        sub = df_all[(df_all["Station"] == station) & (df_all["Méthode"] == method)]
+        if not sub.empty:
+            parts.append(sub)
+    return pd.concat(parts, ignore_index=True) if parts else df_all.iloc[0:0]
+
+
+# Seuil retenu pour la règle opérationnelle Z17NIR/Z17SimSpec -- indicateur de turbidité
+# pris sur le Rrs pySAS Z17NIR lui-même (rééchantillonné sur la grille COPS dans
+# df_all), pas sur COPS L3, pour que le choix de méthode soit indépendant d'une
+# référence externe (COPS n'est pas toujours disponible/en temps réel). Valeur choisie
+# sur le plateau stable du seuil optimal en RMSD log10 trouvé par
+# find_turbidity_threshold pour Z17 (voir Turbidity_threshold_scan_Z17.png).
+Z17_HYBRID_THRESHOLD_PYSAS = 9e-4
+
+
+def rrs_points_hybrid_z17(df_all, threshold=Z17_HYBRID_THRESHOLD_PYSAS):
+    """Sous-ensemble de df_all où chaque station est assignée à Z17SimSpec (eau
+    turbide) ou Z17NIR (eau claire) selon son propre Rrs(665) pySAS Z17NIR -- pas COPS,
+    voir Z17_HYBRID_THRESHOLD_PYSAS. Retourne (df_hybrid, {station: méthode choisie})."""
+    rrs665 = (
+        df_all[(df_all["Méthode"] == "Z17NIR") & (df_all["Longueur d'onde"] == TURBIDITY_WAVELENGTH_NM)]
+        .set_index("Station")["pySAS"].to_dict()
+    )
+    missing = set(df_all["Station"].unique()) - set(rrs665)
+    if missing:
+        print(f"⚠️  Rrs(665) pySAS Z17NIR indisponible pour : {sorted(missing)} -- exclues de la règle hybride.")
+    chosen = {s: ("Z17SimSpec" if v > threshold else "Z17NIR") for s, v in rrs665.items()}
+    df_hybrid = _hybrid_points(df_all, "Z17", rrs665, threshold)
+    return df_hybrid, chosen
+
+
+def plot_rrs_hybrid_scatter(df_hybrid, threshold, out_fig_path):
+    """Scatterplot pySAS vs COPS L3 pour la règle hybride Z17NIR/Z17SimSpec (couleur =
+    longueur d'onde, marqueur = station, stats linéaire+log10 en haut à gauche) -- même
+    convention que plot_rrs_pooled_scatter_by_wavelength, une seule figure combinant
+    toutes les stations sous leur méthode choisie."""
+    stations = sorted(df_hybrid["Station"].unique())
+    marker_of = {s: _STATION_MARKERS[i % len(_STATION_MARKERS)] for i, s in enumerate(stations)}
+    x, y = df_hybrid["COPS"].to_numpy(), df_hybrid["pySAS"].to_numpy()
+    wl, station = df_hybrid["Longueur d'onde"].to_numpy(), df_hybrid["Station"].to_numpy()
+    wl_min, wl_max = float(wl.min()), float(wl.max())
+
+    fig, ax = plt.subplots(figsize=(8, 7))
+    scatter_ref = None
+    for s in stations:
+        sel = station == s
+        if not sel.any():
+            continue
+        scatter_ref = ax.scatter(
+            x[sel], y[sel], c=wl[sel], cmap="viridis", vmin=wl_min, vmax=wl_max,
+            marker=marker_of[s], s=45, alpha=0.85, edgecolors="none",
+        )
+    lims = [min(x.min(), y.min()), max(x.max(), y.max())]
+    pad = 0.05 * (lims[1] - lims[0]) if lims[1] > lims[0] else 0.01
+    lims = [lims[0] - pad, lims[1] + pad]
+    ax.plot(lims, lims, "k--", linewidth=1, label="1:1")
+    ax.set_xlim(lims)
+    ax.set_ylim(lims)
+    ax.set_xlabel(r"$R_{rs}$ COPS L3 (sr$^{-1}$)")
+    ax.set_ylabel(r"$R_{rs}$ pySAS Z17 hybride (sr$^{-1}$)")
+    ax.set_title(f"Z17 hybride (Rrs665 pySAS Z17NIR > {threshold:.0e} -> SimSpec) vs COPS L3 "
+                 f"({len(stations)} stations)")
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    bias, rmsd, r2 = _fit_stats(x, y)
+    log_bias, log_rmsd, log_r2, n_log = _log_fit_stats(x, y)
+    stats_text = (
+        f"linéaire (N={len(x)})\n"
+        f"  Biais = {bias:.5f}\n"
+        f"  RMSD = {rmsd:.5f}\n"
+        f"  R² = {r2:.4f}\n"
+        f"log10 (N={n_log})\n"
+        f"  Biais = {log_bias:.4f}\n"
+        f"  RMSD = {log_rmsd:.4f}\n"
+        f"  R² = {log_r2:.4f}"
+    )
+    ax.text(0.03, 0.97, stats_text, transform=ax.transAxes, ha="left", va="top",
+            fontsize=8.5, bbox=dict(facecolor="white", alpha=0.85, edgecolor="lightgray"))
+
+    station_handles = [
+        plt.Line2D([0], [0], marker=marker_of[s], color="dimgray", linestyle="", markersize=8, label=s)
+        for s in stations
+    ]
+    station_handles.append(plt.Line2D([0], [0], color="black", linestyle="--", linewidth=1, label="1:1"))
+    fig.legend(handles=station_handles, loc="lower center", ncol=min(6, len(station_handles)),
+               fontsize=8, bbox_to_anchor=(0.5, -0.12))
+
+    if scatter_ref is not None:
+        cbar = fig.colorbar(scatter_ref, ax=ax, orientation="vertical", fraction=0.046, pad=0.03)
+        cbar.set_label("Longueur d'onde (nm)")
+
+    fig.savefig(out_fig_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_turbidity_threshold_scan(df_scan, family, nir_rmsd, simspec_rmsd, out_fig_path):
+    """RMSD (linéaire et log10) de la règle hybride NIR/SimSpec en fonction du seuil de
+    turbidité testé, avec les deux méthodes pures en référence horizontale (linéaire
+    seulement -- comparable directement au panneau de gauche) et le seuil optimal
+    marqué sur chaque panneau."""
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5.5))
+
+    best_idx = df_scan["RMSD"].idxmin()
+    best_log_idx = df_scan["RMSD_log10"].idxmin()
+
+    ax = axes[0]
+    ax.plot(df_scan["Seuil_Rrs665"], df_scan["RMSD"], color="black", marker="o", markersize=3)
+    ax.axhline(nir_rmsd, color="tab:blue", linestyle="--", label=f"{family}NIR seul")
+    ax.axhline(simspec_rmsd, color="tab:orange", linestyle="--", label=f"{family}SimSpec seul")
+    ax.axvline(df_scan.loc[best_idx, "Seuil_Rrs665"], color="tab:green", linestyle=":",
+               label=f"Seuil optimal = {df_scan.loc[best_idx, 'Seuil_Rrs665']:.2e}")
+    ax.set_xlabel(r"Seuil de turbidité, $R_{rs}$(665) COPS L3 (sr$^{-1}$)")
+    ax.set_ylabel("RMSD (linéaire)")
+    ax.set_title(f"{family} -- RMSD linéaire vs seuil de turbidité")
+    ax.legend(fontsize=8)
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    ax = axes[1]
+    ax.plot(df_scan["Seuil_Rrs665"], df_scan["RMSD_log10"], color="black", marker="o", markersize=3)
+    ax.axvline(df_scan.loc[best_log_idx, "Seuil_Rrs665"], color="tab:green", linestyle=":",
+               label=f"Seuil optimal = {df_scan.loc[best_log_idx, 'Seuil_Rrs665']:.2e}")
+    ax.set_xlabel(r"Seuil de turbidité, $R_{rs}$(665) COPS L3 (sr$^{-1}$)")
+    ax.set_ylabel("RMSD (log10)")
+    ax.set_title(f"{family} -- RMSD log10 vs seuil de turbidité")
+    ax.legend(fontsize=8)
+    ax.grid(True, linestyle="--", alpha=0.4)
+
+    fig.savefig(out_fig_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def find_turbidity_threshold(station_paths, out_dir, window_pad_min=0.0, families=TURBIDITY_FAMILIES,
+                              n_thresholds=41):
+    """Cherche, pour chaque famille de méthode (M99, Z17), le seuil de Rrs(665) COPS L3
+    qui minimise le RMSD poolé d'une règle hybride "station turbide (Rrs665 > seuil) ->
+    <famille>SimSpec, sinon -> <famille>NIR" -- SimSpec utilise tout le spectre visible
+    pour estimer la réflexion du ciel, alors que NIR suppose Rrs(NIR)~0, hypothèse mise
+    en défaut en eaux turbides (matières en suspension diffusant dans le NIR). Balaye
+    les seuils entre le min et le max de Rrs(665) observé sur les stations fournies."""
+    os.makedirs(out_dir, exist_ok=True)
+    df_all = collect_rrs_pooled_points(station_paths, window_pad_min=window_pad_min)
+    if df_all is None:
+        print("⚠️  Aucun point Rrs poolé sur les stations fournies.")
+        return
+
+    rrs665_by_station = {}
+    stations_with_points = set(df_all["Station"].unique())
+    for station_path in station_paths:
+        label = os.path.basename(os.path.normpath(station_path))
+        if label not in stations_with_points:
+            continue
+        try:
+            rrs665_by_station[label] = station_rrs665_l3(station_path)
+        except Exception as e:
+            print(f"❌ [{label}] Rrs(665) indisponible : {e}")
+
+    rrs665_csv = os.path.join(out_dir, "Turbidity_rrs665_by_station.csv")
+    pd.DataFrame(sorted(rrs665_by_station.items()), columns=["Station", "Rrs665_COPS_L3"]).to_csv(
+        rrs665_csv, index=False)
+    print(f"\n📋 Rrs(665) COPS L3 par station : {rrs665_csv}")
+
+    all_rrs665 = np.array(list(rrs665_by_station.values()))
+    thresholds = np.linspace(all_rrs665.min(), all_rrs665.max(), n_thresholds)
+
+    summary_rows = []
+    for family in families:
+        nir_method, simspec_method = f"{family}NIR", f"{family}SimSpec"
+        if nir_method not in df_all["Méthode"].unique() or simspec_method not in df_all["Méthode"].unique():
+            print(f"⚠️  {family} : {nir_method}/{simspec_method} absent des données -- ignoré.")
+            continue
+
+        g_nir = df_all[df_all["Méthode"] == nir_method]
+        g_simspec = df_all[df_all["Méthode"] == simspec_method]
+        _, nir_rmsd, nir_r2 = _fit_stats(g_nir["COPS"].to_numpy(), g_nir["pySAS"].to_numpy())
+        _, simspec_rmsd, simspec_r2 = _fit_stats(g_simspec["COPS"].to_numpy(), g_simspec["pySAS"].to_numpy())
+
+        scan_rows = []
+        for threshold in thresholds:
+            hybrid = _hybrid_points(df_all, family, rrs665_by_station, threshold)
+            if hybrid.empty:
+                continue
+            bias, rmsd, r2 = _fit_stats(hybrid["COPS"].to_numpy(), hybrid["pySAS"].to_numpy())
+            log_bias, log_rmsd, log_r2, n_log = _log_fit_stats(hybrid["COPS"].to_numpy(), hybrid["pySAS"].to_numpy())
+            n_turbid = sum(1 for v in rrs665_by_station.values() if v > threshold)
+            scan_rows.append({
+                "Seuil_Rrs665": threshold, "N": len(hybrid), "N_stations_turbides": n_turbid,
+                "N_stations_claires": len(rrs665_by_station) - n_turbid,
+                "Biais": round(bias, 5), "RMSD": round(rmsd, 5), "R²": round(r2, 4),
+                "Biais_log10": round(log_bias, 5) if np.isfinite(log_bias) else None,
+                "RMSD_log10": round(log_rmsd, 5) if np.isfinite(log_rmsd) else None,
+                "R²_log10": round(log_r2, 4) if np.isfinite(log_r2) else None,
+            })
+        df_scan = pd.DataFrame(scan_rows)
+        scan_csv = os.path.join(out_dir, f"Turbidity_threshold_scan_{family}.csv")
+        df_scan.to_csv(scan_csv, index=False)
+
+        best = df_scan.loc[df_scan["RMSD"].idxmin()]
+        best_log = df_scan.loc[df_scan["RMSD_log10"].idxmin()]
+        print(f"\n=== {family} : NIR seul RMSD={nir_rmsd:.5f} (R²={nir_r2:.4f})  "
+              f"SimSpec seul RMSD={simspec_rmsd:.5f} (R²={simspec_r2:.4f}) ===")
+        print(f"  Seuil optimal (RMSD linéaire) : {best['Seuil_Rrs665']:.2e}  "
+              f"-> RMSD={best['RMSD']:.5f}, R²={best['R²']:.4f}, "
+              f"{int(best['N_stations_turbides'])} station(s) turbide(s)/{len(rrs665_by_station)}")
+        print(f"  Seuil optimal (RMSD log10)    : {best_log['Seuil_Rrs665']:.2e}  "
+              f"-> RMSD_log10={best_log['RMSD_log10']:.4f}, R²_log10={best_log['R²_log10']:.4f}")
+        best_pure_rmsd = min(nir_rmsd, simspec_rmsd)
+        gain = best_pure_rmsd - best["RMSD"]
+        if gain > 1e-9:
+            print(f"  ✅ La règle hybride améliore le RMSD de {gain:.5f} par rapport à la meilleure méthode pure.")
+        else:
+            best_pure_name = "NIR" if nir_rmsd <= simspec_rmsd else "SimSpec"
+            print(f"  ⚠️  Aucun seuil ne bat {family}{best_pure_name} seul (RMSD={best_pure_rmsd:.5f}) sur ces données.")
+
+        fig_path = os.path.join(out_dir, f"Turbidity_threshold_scan_{family}.png")
+        plot_turbidity_threshold_scan(df_scan, family, nir_rmsd, simspec_rmsd, fig_path)
+        print(f"  📊 {scan_csv}\n  📊 {fig_path}")
+
+        summary_rows.append({
+            "Famille": family, "RMSD_NIR_seul": round(nir_rmsd, 5), "RMSD_SimSpec_seul": round(simspec_rmsd, 5),
+            "Seuil_optimal_lineaire": round(float(best["Seuil_Rrs665"]), 6), "RMSD_optimal": best["RMSD"],
+            "Seuil_optimal_log10": round(float(best_log["Seuil_Rrs665"]), 6),
+            "RMSD_log10_optimal": best_log["RMSD_log10"],
+        })
+
+    if summary_rows:
+        summary_csv = os.path.join(out_dir, "Turbidity_threshold_summary.csv")
+        pd.DataFrame(summary_rows).to_csv(summary_csv, index=False)
+        print(f"\n📋 Résumé toutes familles : {summary_csv}")
+
+
 def discover_stations_with_cops():
     """Racine L2 dérivée de rea.MAIN_DATA_PATH (.../Amundsen_2026/L1/ -> .../L2/) --
-    toutes les stations ayant un sous-dossier cops/, pour --ed0-vs-es --all."""
+    toutes les stations ayant un sous-dossier cops/, pour --ed0-vs-es --all / --rrs-pooled
+    --all / --turbidity-threshold --all."""
     l2_root = os.path.join(os.path.dirname(os.path.normpath(rea.MAIN_DATA_PATH)), "L2")
     return sorted(os.path.dirname(p) for p in glob.glob(os.path.join(l2_root, "*", "cops")))
 
 
-def compare_ed0_es(station_paths, out_dir):
-    """Point d'entrée agrégé -- une ou plusieurs stations, un seul jeu de figures/stats
-    combinant tous les bins Ed0/Es appariés (plus de puissance statistique pour juger
-    l'effet SZA/nébulosité que station par station)."""
+def discover_experiment_dates(cops_dir):
+    """Dates distinctes (YYYYMMDD) présentes dans un dossier cops/ autonome (ex.
+    Es_experiment/), déduites des noms de fichiers CASCADE_CAST_NNN_YYMMDD_HHMMSS_*.csv
+    -- un dossier de ce type peut mélanger des casts de plusieurs jours."""
+    dates = set()
+    for p in glob.glob(os.path.join(cops_dir, "CASCADE_CAST_*_URC.csv")):
+        m = re.search(r"CASCADE_CAST_\d+_(\d{6})_\d{6}_URC\.csv$", os.path.basename(p))
+        if m:
+            dates.add("20" + m.group(1))
+    return sorted(dates)
+
+
+def compare_ed0_es(station_paths, out_dir, experiment_dirs=None):
+    """Point d'entrée agrégé -- une ou plusieurs stations, plus optionnellement un ou
+    plusieurs dossiers cops/ autonomes (ex. Es_experiment/, hors arborescence L2, une
+    date par cast qui y est trouvée) -- un seul jeu de figures/stats combinant tous les
+    bins Ed0/Es appariés (plus de puissance statistique pour juger l'effet SZA/
+    nébulosité que station par station)."""
     all_dfs = []
     for station_path in station_paths:
         try:
@@ -841,14 +1555,26 @@ def compare_ed0_es(station_paths, out_dir):
         if not df.empty:
             all_dfs.append(df)
 
+    for cops_dir in (experiment_dirs or []):
+        cops_dir = os.path.abspath(cops_dir)
+        for date_str in discover_experiment_dates(cops_dir):
+            label = f"{os.path.basename(cops_dir)}_{date_str}"
+            try:
+                df = match_ed0_es(cops_dir, date_str, label)
+            except Exception as e:
+                print(f"❌ [{label}] {e}")
+                continue
+            if not df.empty:
+                all_dfs.append(df)
+
     if not all_dfs:
-        print("⚠️  Aucune donnée Ed0/Es appariée sur les stations fournies.")
+        print("⚠️  Aucune donnée Ed0/Es appariée sur les stations/dossiers fournis.")
         return
 
     df_all = pd.concat(all_dfs, ignore_index=True)
     os.makedirs(out_dir, exist_ok=True)
     df_all.to_csv(os.path.join(out_dir, "Ed0_vs_Es_matched_bins.csv"), index=False)
-    plot_ed0_es_per_wavelength(df_all, out_dir, label=f"{df_all['Station'].nunique()} station(s)")
+    plot_ed0_es_per_wavelength(df_all, out_dir, label=f"{df_all['Station'].nunique()} station(s)/expérience(s)")
 
 
 if __name__ == "__main__":
@@ -863,27 +1589,61 @@ if __name__ == "__main__":
     parser.add_argument("--ed0-vs-es", action="store_true",
                          help="Mode comparaison Ed0 (COPS, brut) vs Es (pySAS, L1BQC par scan) binnée à 5s, "
                               "au lieu de la comparaison Rrs par défaut.")
+    parser.add_argument("--rrs-pooled", action="store_true",
+                         help="Mode Rrs poolé (équivalent CASCADE de compare_hypersas_L3.py, GreenEdge) : "
+                              "un seul jeu de stats/scatterplot combinant toutes les stations fournies "
+                              "(--all/--station), au lieu des figures/stats individuelles par station du "
+                              "mode Rrs par défaut.")
+    parser.add_argument("--turbidity-threshold", action="store_true",
+                         help="Cherche, pour M99 et Z17, le seuil de Rrs(665) COPS L3 qui minimise le RMSD "
+                              "poolé d'une règle hybride station turbide -> SimSpec / station claire -> NIR "
+                              "(--all/--station).")
     parser.add_argument("--station", action="append", default=None,
-                         help="Nom de dossier station sous .../L2/ (répétable) -- pour --ed0-vs-es.")
+                         help="Nom de dossier station sous .../L2/ (répétable) -- toutes les stations "
+                              "explicites, mode Rrs comme --ed0-vs-es.")
     parser.add_argument("--all", action="store_true",
-                         help="Toutes les stations avec un dossier cops/ -- pour --ed0-vs-es.")
+                         help="Toutes les stations avec un dossier cops/ sous .../L2/ -- mode Rrs comme "
+                              "--ed0-vs-es.")
     parser.add_argument("--out-dir", default=None,
                          help="Dossier de sortie pour --ed0-vs-es (défaut: <MAIN_DATA_PATH>/pySAS/Ed0_vs_Es/).")
+    parser.add_argument("--experiment-dir", action="append", default=None,
+                         help="Dossier cops/ autonome hors arborescence L2 (répétable, ex. "
+                              ".../L1/cops/Es_experiment/) à inclure dans --ed0-vs-es, en plus des "
+                              "stations -- toutes les dates de cast qui y sont trouvées sont incluses.")
+    parser.add_argument("--window-pad-min", type=float, default=0.0,
+                         help="Mode Rrs seulement : étend la fenêtre temporelle COPS de +/- N minutes "
+                              "avant de chercher les casts pySAS correspondants -- utile pour une station "
+                              "où peu de casts pySAS chevauchent la fenêtre COPS stricte (ex. après retrait "
+                              "d'un cast contaminé). Défaut 0 (fenêtre stricte, comportement inchangé).")
     args = parser.parse_args()
 
-    if args.ed0_vs_es:
+    if args.all or args.station:
         if args.all:
             station_paths = discover_stations_with_cops()
-        elif args.station:
+        else:
             l2_root = os.path.join(os.path.dirname(os.path.normpath(rea.MAIN_DATA_PATH)), "L2")
             station_paths = [os.path.join(l2_root, s) for s in args.station]
-        elif args.station_path:
-            station_paths = [args.station_path]
-        else:
-            parser.error("--ed0-vs-es nécessite station_path, --station (répétable) ou --all")
-        out_dir = args.out_dir or os.path.join(rea.MAIN_DATA_PATH, "pySAS", "Ed0_vs_Es")
-        compare_ed0_es(station_paths, out_dir)
+    elif args.station_path:
+        station_paths = [args.station_path]
+    elif args.ed0_vs_es and args.experiment_dir:
+        station_paths = []
     else:
-        if not args.station_path:
-            parser.error("station_path requis pour le mode Rrs (par défaut) -- ou utiliser --ed0-vs-es")
-        main(args.station_path, use_symlink=args.symlink)
+        parser.error("Spécifier station_path, --station (répétable), --all ou --experiment-dir "
+                      "(avec --ed0-vs-es)")
+
+    if args.ed0_vs_es:
+        out_dir = args.out_dir or os.path.join(rea.MAIN_DATA_PATH, "pySAS", "Ed0_vs_Es")
+        compare_ed0_es(station_paths, out_dir, experiment_dirs=args.experiment_dir)
+    elif args.rrs_pooled:
+        out_dir = args.out_dir or os.path.join(rea.MAIN_DATA_PATH, "pySAS", "Rrs_vs_COPS_pooled")
+        compare_rrs_pooled(station_paths, out_dir, window_pad_min=args.window_pad_min)
+    elif args.turbidity_threshold:
+        out_dir = args.out_dir or os.path.join(rea.MAIN_DATA_PATH, "pySAS", "Turbidity_threshold")
+        find_turbidity_threshold(station_paths, out_dir, window_pad_min=args.window_pad_min)
+    else:
+        print(f"📋 {len(station_paths)} station(s) à traiter (mode Rrs)")
+        for station_path in station_paths:
+            try:
+                main(station_path, use_symlink=args.symlink, window_pad_min=args.window_pad_min)
+            except Exception as e:
+                print(f"❌ [{os.path.basename(station_path)}] {e}")

@@ -3,12 +3,14 @@
 
 import multiprocessing
 import os
+import re
 import glob
 import time
 import sys
 import argparse
 import json
 import shutil
+from datetime import datetime, timezone
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 if not hasattr(plt.cm, 'get_cmap'):
@@ -50,6 +52,12 @@ EXPERIMENT = env["EXPERIMENT"]
 MAIN_DATA_PATH = env["MAIN_DATA_PATH"]
 ROLL_OFFSET = float(env["ROLL_OFFSET"])
 PITCH_OFFSET = float(env.get("PITCH_OFFSET", 0.0))
+TOWER_OFFSET = float(env.get("TOWER_OFFSET", 0.0))
+APPLY_L1A_CORRECTION = env.get("APPLY_L1A_CORRECTION", "true").strip().lower() == "true"
+TOWER_OFFSET_CUTOFF_UTC = None
+if env.get("TOWER_OFFSET_CUTOFF_UTC"):
+    TOWER_OFFSET_CUTOFF_UTC = datetime.strptime(
+        env["TOWER_OFFSET_CUTOFF_UTC"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
 
 # Ajouter ce dossier au chemin de recherche de Python
 if PATH_MY_SCRIPTS not in sys.path:
@@ -86,12 +94,33 @@ parser.add_argument("--roll-offset", type=float, default=None,
 parser.add_argument("--pitch-offset", type=float, default=None,
                     help="Surcharge ponctuelle de PITCH_OFFSET (pipeline_config.env), meme "
                          "usage que --roll-offset.")
+parser.add_argument("--tower-offset", type=float, default=None,
+                    help="Surcharge ponctuelle de TOWER_OFFSET (pipeline_config.env) -- offset "
+                         "statique applique au cap SAS (orientation de la tour) pour corriger un "
+                         "biais de montage/reference, meme usage que --roll-offset.")
 parser.add_argument("--fix-clock-drift", action="store_true",
                     help="Au niveau L1AQC seulement: detecte et corrige automatiquement une "
                          "derive de l'horloge interne du datalogger (DATETAG/TIMETAG2) par "
                          "rapport au temps GPS vrai ($GPRMC DATE/UTCPOS), pour les fichiers "
                          "cibles (utiliser avec --time pour ne corriger qu'une plage precise). "
                          "Voir correct_L1A_files.py::compute_clock_drift_offset.")
+parser.add_argument("--skip-l1a-correction", action="store_true",
+                    help="Au niveau L1AQC seulement: ne PAS regenerer L1A_corrected depuis L1A "
+                         "(saute heading-interp/roll/pitch/tower/clock-drift), reutilise "
+                         "L1A_corrected tel quel comme entree -- pour un retraitement qui ne doit "
+                         "PAS retoucher un roll/pitch deja correct historiquement (voir "
+                         "apply_tower_offset_to_L1A_corrected.py, qui patch seulement le cap avant "
+                         "d'appeler --level L1AQC avec ce flag). Suppose que L1A_corrected existe "
+                         "deja -- different de --apply-l1a-correction false, qui lit /L1A/ "
+                         "directement sans jamais utiliser L1A_corrected.")
+parser.add_argument("--apply-l1a-correction", type=str, default=None, choices=["true", "false"],
+                    help="Surcharge ponctuelle de APPLY_L1A_CORRECTION (pipeline_config.env). "
+                         "'false': au niveau L1AQC, saute entierement correct_L1A_files.py et lit "
+                         "/L1A/ directement (pas /L1A_corrected/) -- pour la periode a partir du "
+                         "2026-09-03 ou l'IMU et l'orientation de la tour sont corrigees a la "
+                         "source, plus besoin de correction logicielle. 'true': comportement "
+                         "historique (regenere L1A_corrected via correct_L1A_file, sauf si "
+                         "--skip-l1a-correction est aussi passe).")
 
 args = parser.parse_args()
 
@@ -109,7 +138,32 @@ if args.roll_offset is not None:
 if args.pitch_offset is not None:
     print(f"⚠️  PITCH_OFFSET overridden via --pitch-offset: {PITCH_OFFSET} -> {args.pitch_offset}")
     PITCH_OFFSET = args.pitch_offset
+TOWER_OFFSET_FORCED = args.tower_offset is not None
+if TOWER_OFFSET_FORCED:
+    print(f"⚠️  TOWER_OFFSET overridden via --tower-offset: {TOWER_OFFSET} -> {args.tower_offset} "
+          f"(applique a tous les fichiers cibles, ignore TOWER_OFFSET_CUTOFF_UTC)")
+    TOWER_OFFSET = args.tower_offset
+if args.apply_l1a_correction is not None:
+    new_val = args.apply_l1a_correction == "true"
+    print(f"⚠️  APPLY_L1A_CORRECTION overridden via --apply-l1a-correction: "
+          f"{APPLY_L1A_CORRECTION} -> {new_val}")
+    APPLY_L1A_CORRECTION = new_val
 # #################################
+
+
+def resolve_tower_offset(filename):
+    """Offset de tour a appliquer pour ce fichier precis -- TOWER_OFFSET seulement pour
+    les acquisitions AVANT TOWER_OFFSET_CUTOFF_UTC (correction logicielle live de
+    indexing_table_orientation_on_ship sur le pySAS, cf. pipeline_config.env), 0 apres
+    (le cap SAS brut est deja correct). --tower-offset en ligne de commande court-
+    circuite cette logique et s'applique tel quel a tous les fichiers cibles."""
+    if TOWER_OFFSET_FORCED or TOWER_OFFSET_CUTOFF_UTC is None:
+        return TOWER_OFFSET
+    m = re.search(r"(\d{8})_(\d{6})", filename)
+    if not m:
+        return TOWER_OFFSET
+    file_dt = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    return TOWER_OFFSET if file_dt < TOWER_OFFSET_CUTOFF_UTC else 0.0
 
 PATH_DATA = os.path.join(MAIN_DATA_PATH, "pySAS")
 TSG_PATH = os.path.join(MAIN_DATA_PATH, "TSG")
@@ -373,31 +427,43 @@ if __name__ == "__main__":
 
         print(f"with ancillary data {PATH_ANC}")
 
-        ext_propre = FILE_EXT[0] if isinstance(FILE_EXT, list) else FILE_EXT
-        print(f"🔄 [Pre-Processing L1AQC] Correcting SAS heading & ROLL from L1A dataset...")
-        l1afilelist = glob.glob(os.path.join(PATH_INPUT, "L1A", f"*{time_pattern}*{ext_propre}"))
-        print(f"📋 {len(l1afilelist)} file(s) detected for target time template {time_pattern}.")
+        if not APPLY_L1A_CORRECTION:
+            print(f"⏩ [Pre-Processing L1AQC] APPLY_L1A_CORRECTION=false: correct_L1A_files.py "
+                  f"entierement saute, lecture directe depuis /L1A/ (pas de heading-interp/roll/"
+                  f"pitch/tower/clock-drift -- IMU et orientation de tour corrigees a la source "
+                  f"depuis le 2026-09-03).")
+            FROM_LEVELS = ["L1A"]
+        else:
+            if args.skip_l1a_correction:
+                print(f"⏩ [Pre-Processing L1AQC] --skip-l1a-correction: reusing L1A_corrected as-is "
+                      f"(no heading-interp/roll/pitch/tower/clock-drift reapplied).")
+            else:
+                ext_propre = FILE_EXT[0] if isinstance(FILE_EXT, list) else FILE_EXT
+                print(f"🔄 [Pre-Processing L1AQC] Correcting SAS heading & ROLL from L1A dataset...")
+                l1afilelist = glob.glob(os.path.join(PATH_INPUT, "L1A", f"*{time_pattern}*{ext_propre}"))
+                print(f"📋 {len(l1afilelist)} file(s) detected for target time template {time_pattern}.")
 
-        for f in sorted(l1afilelist):
-            filename = os.path.basename(f)
-            print(f"--> Processing file: {filename} ...")
-            try:
-                correct_L1A_file(
-                    os.path.join(PATH_INPUT, "L1A"),
-                    os.path.join(PATH_INPUT, "L1A_corrected"),
-                    filename,
-                    roll_offset=ROLL_OFFSET,
-                    pitch_offset=PITCH_OFFSET,
-                    fix_clock_drift=args.fix_clock_drift
-                )
-                print(f"    ✅ Heading interpolation, Roll and Pitch offsets successfully applied to {filename}")
-            except Exception as e:
-                print(f"    ❌ CRITICAL ERROR on file {filename}: {e}")
-                print(f"    ⚠️ This file might be corrupted (missing datasets). Skipping it.")
-                continue
+                for f in sorted(l1afilelist):
+                    filename = os.path.basename(f)
+                    print(f"--> Processing file: {filename} ...")
+                    try:
+                        correct_L1A_file(
+                            os.path.join(PATH_INPUT, "L1A"),
+                            os.path.join(PATH_INPUT, "L1A_corrected"),
+                            filename,
+                            roll_offset=ROLL_OFFSET,
+                            pitch_offset=PITCH_OFFSET,
+                            tower_offset=resolve_tower_offset(filename),
+                            fix_clock_drift=args.fix_clock_drift
+                        )
+                        print(f"    ✅ Heading interpolation, Roll and Pitch offsets successfully applied to {filename}")
+                    except Exception as e:
+                        print(f"    ❌ CRITICAL ERROR on file {filename}: {e}")
+                        print(f"    ⚠️ This file might be corrupted (missing datasets). Skipping it.")
+                        continue
 
-        # Redirection cruciale vers le dossier corrigé pour la suite d'HyperCP
-        FROM_LEVELS = ["L1A_corrected"]
+            # Redirection cruciale vers le dossier corrigé pour la suite d'HyperCP
+            FROM_LEVELS = ["L1A_corrected"]
 
     # ===========================================================================
     # 2. INPUT FILES SEARCH AND VALIDATION FOR HYPERCP CORE RUN

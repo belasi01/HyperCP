@@ -50,8 +50,10 @@ For the interactive tool used to browse the L2 results this pipeline produces, s
 | `WEBDAV_HOST` / `WEBDAV_USER` / `WEBDAV_PASS` | Amundsen Science WebDAV credentials. Only used when `SYNC_MODE=webdav`. |
 | `SMB_MOUNT_POINT` / `SMB_TSG_SUBPATH` / `SMB_ATS_SUBPATH` / `SMB_PYSAS_SUBPATH` | Local mount point and per-data-type subpaths for `smb://10.0.0.10/data`. Only used when `SYNC_MODE=smb`. See "On-board mode (SMB)" below. |
 | `CRUISE` / `EXPERIMENT` | Used to build ancillary filenames (`<CRUISE>_<EXPERIMENT>_Ancillary_<date>.sb`) and passed through to SeaBASS metadata. |
-| `ROLL_OFFSET` | Static degrees added to raw ROLL in `correct_L1A_files.py::process_roll_offset`, applied unconditionally to every date processed. Currently `-5`. **This needs periodic re-validation** — see "IMU roll bias" below. |
-| `PITCH_OFFSET` | Same mechanism as `ROLL_OFFSET`, but for PITCH (`correct_L1A_files.py::process_pitch_offset`). Added 2026-07-31 after a second physical-disturbance event (2026-07-30, see below) made it clear a single-axis correction isn't enough. Currently `0` (not yet corrected — wiring only, values/reprocessing to be decided per date). |
+| `ROLL_OFFSET` | Static degrees added to raw ROLL in `correct_L1A_files.py::process_roll_offset`. Only applied when `APPLY_L1A_CORRECTION=true` (see below). Currently `-4` — see "IMU roll/pitch bias" below, **resolved at the source 2026-09-03**, this value only matters when reprocessing dates before then. |
+| `PITCH_OFFSET` | Same mechanism as `ROLL_OFFSET`, but for PITCH (`correct_L1A_files.py::process_pitch_offset`). Currently `-8`. Same caveat as `ROLL_OFFSET` above. |
+| `TOWER_OFFSET` / `TOWER_OFFSET_CUTOFF_UTC` | Static degrees added to the raw SAS heading (`correct_L1A_files.py::process_heading_offset`) to fix a tower-mounting bias discovered 2026-08-31 (feeds `RelAz`). Only applied to raw acquisitions before `TOWER_OFFSET_CUTOFF_UTC` (Simon fixed the tower's own `indexing_table_orientation_on_ship` live on the ship around then, see `run_pySAS006_processing.py::resolve_tower_offset`). Currently `0` (mission-wide reprocessing already done 2026-09-02, see `reprocess_mission.sh`) — only needed again if reprocessing pre-cutoff dates from scratch. |
+| `APPLY_L1A_CORRECTION` | `true`: historical behaviour, `correct_L1A_files.py` regenerates `L1A_corrected` from `L1A` (heading-interp/`ROLL_OFFSET`/`PITCH_OFFSET`/`TOWER_OFFSET`/clock-drift) before L1AQC. `false`: skips it entirely, L1AQC reads straight from `L1A/` — set `false` 2026-09-03 once the IMU and tower-orientation issues were fixed at the source (no software correction needed for new acquisitions). Override per-call with `--apply-l1a-correction true` when reprocessing older dates. |
 | `PATH_HCP` | Absolute path to the HyperCP repo root (trailing slash). |
 | `MAIN_DATA_PATH` | Absolute path to the data root; `TSG/`, `ATS/`, and `pySAS/` subfolders live under it (auto-created if missing). |
 | `LFTP_BIN` | Path to the `lftp` binary used for the WebDAV mirror. |
@@ -128,29 +130,45 @@ rather than processing garbage.
 
 ## Known quirks / open items
 
-- **IMU roll/pitch bias**: `ROLL_OFFSET` (and, as of 2026-07-31, `PITCH_OFFSET`) are
-  applied to every date unconditionally, but the real bias is not a single constant —
-  it has moved at least four times so far, always in a way consistent with the sensor
-  physically getting knocked or re-seated rather than electronic drift (raw PITCH and
-  ROLL jump together, by comparable amounts, and are otherwise very stable within a
-  period):
-  - **2026-07-01 to 07-17**: raw ROLL drifted from about +5° to +8.7°, raw PITCH stayed
-    near 0°.
-  - **2026-07-18 afternoon to 07-19 ~20:20 UTC**: both ROLL and PITCH jumped to ~14°
-    together, then dropped back to near 0° around 2026-07-19 20:20 UTC.
-  - **2026-07-19 20:20 UTC to 07-29**: both near 0° (confirmed through 2026-07-20; the
-    07-29 GPS failure — see below — doesn't appear to have disturbed the IMU).
-  - **2026-07-30**: both jumped again, to a very stable ROLL median ~18.1° and PITCH
-    median ~19.8° for the entire day (two mid-day L1A files are even missing the
-    SATTHS1500A group entirely), almost certainly from physically handling the mast
-    while fixing the GPS that day.
-  A single global static offset per axis is therefore only ever an approximation for
-  whichever period it was tuned to, and actively wrong for every other period —
-  `ROLL_OFFSET=-5` in particular has been *wrong* (introducing a new bias rather than
-  removing one) for most of the cruise since 2026-07-19. `PITCH_OFFSET` was added
-  2026-07-31 (currently `0`, not yet corrected) so the mechanism exists, but the
-  question of per-date-range values — and reprocessing the affected date ranges from
-  RAW once decided — is still open.
+- **IMU roll/pitch bias — RESOLVED at the source 2026-09-03.** `ROLL_OFFSET`/
+  `PITCH_OFFSET` were applied to every date unconditionally, but the real bias was not a
+  single constant — it moved at least five times over the cruise, always in a way
+  consistent with the sensor physically getting knocked or re-seated rather than
+  electronic drift (raw PITCH and ROLL jump together, by comparable amounts, and are
+  otherwise very stable within a period). Per-date recommended values (computed from raw
+  IMU medians) are in `compute_imu_offsets.py` / `IMU_Roll_Pitch_Offsets.csv` — regenerate
+  with `python compute_imu_offsets.py` for the full up-to-date history. Known regimes as
+  of 2026-09-02: 07-01→07-17 (ROLL drifting +5°→+8.7°, PITCH ~0°), 07-18pm→07-19 ~20:20
+  UTC (transition, both ~14°), 07-19 20:20→07-27 (both ~0°), 07-28→08-07 (transition then
+  both ~18-20°), 08-08→09-01/02 (transition then ROLL ~4°/PITCH ~8°). Simon physically
+  fixed the IMU 2026-09-03, so `APPLY_L1A_CORRECTION=false` from that date on (no
+  software correction needed for new acquisitions) — `ROLL_OFFSET`/`PITCH_OFFSET` above
+  only matter when reprocessing a pre-2026-09-03 date with `--apply-l1a-correction true`.
+  **Do not blindly apply today's global `ROLL_OFFSET`/`PITCH_OFFSET` across the whole
+  mission** — it silently reintroduces bias for any period it wasn't tuned to; use the
+  per-date CSV instead if reprocessing older dates from RAW.
+- **Tower orientation bias — RESOLVED at the source 2026-08-31/09-02.** The pySAS tower's
+  mounting reference was off by 11° (feeds `RelAz` via the raw `SAS` heading telemetry,
+  `/UMTWR_v0.tdf/HEADING`). Fixed in two steps: Simon corrected
+  `indexing_table_orientation_on_ship` live in the pySAS acquisition software
+  2026-08-31 ~20:10 UTC (new acquisitions already correct from then on), and the whole
+  mission (2026-07-01 through 2026-08-31 20:10 UTC) was reprocessed 2026-09-02 with
+  `TOWER_OFFSET=+11` applied via `correct_L1A_files.py::process_heading_offset`, patched
+  directly onto the existing (roll/pitch-correct) `L1A_corrected` files rather than
+  regenerated from RAW — see `reprocess_mission.sh` /
+  `apply_tower_offset_to_L1A_corrected.py`. `fL1aqcSunAngleMax` was raised 135→145° in
+  the active `.cfg` for this (M99 unaffected — nearest-neighbour LUT; Z17's fast LUT caps
+  at 140° and falls back to the slower analytical model above that, not an error).
+  **11 of 55 dates could not be reprocessed** (unrelated pre-existing issues, not caused
+  by the tower fix): 2026-07-01 to 07-06 need the older pre-`_Leg1-3` calibration
+  convention (see "Pre-CASCADE-leg dates" below); 2026-07-29, 08-01, 08-14, 08-16, 08-17
+  each have at least one abnormally short raw file (tens of records instead of ~2000)
+  that produces no valid L2 ensemble, and `Source/ProcessL2.py:1933` doesn't guard
+  against `getDataset("Rrs_HYPER")` returning `None` — combined with `run_pySAS006_-
+  processing.py`'s multiprocessing `pool.map()` having no per-file error tolerance, one
+  bad file crashes that entire date's L2 batch for every file, not just the bad one.
+  Not fixed as of this writing (would need either a `Source/` fix or excluding the
+  specific short file per date and rerunning).
 - **GPS outage (2026-07-29)**: raw GPRMC STATUS degraded starting ~16:31 UTC and went
   fully void (`V`, frozen last-known position) from ~18:31 UTC through the end of that
   day's data. HyperCP's own L1AQC GPS-status filter (`ProcessL1aqc.py`) already flags

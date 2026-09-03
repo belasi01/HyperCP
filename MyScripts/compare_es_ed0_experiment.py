@@ -51,7 +51,6 @@ RAW_TIMES = [
     "201944", "204944", "211944", "214944", "221944",
 ]
 COPS_DIR = os.path.expanduser("~/Data/Amundsen_2026/L1/cops/Es_experiment")
-OUT_DIR = os.path.join(rea.MAIN_DATA_PATH, "pySAS", "Ed0_vs_Es", f"Es_experiment_{DATE_STR}")
 RUN_SCRIPT = os.path.join(MY_DIR, "run_pySAS006_processing.py")
 LEVELS = ["L1A", "L1AQC", "L1B", "L1BQC"]
 
@@ -73,18 +72,19 @@ def main(do_process, times, date_str):
         process_raw(times, date_str)
 
     label = f"Es_experiment_{date_str}"
+    out_dir = os.path.join(rea.MAIN_DATA_PATH, "pySAS", "Ed0_vs_Es", label)
     df = cpc.match_ed0_es(COPS_DIR, date_str, label)
     if df.empty:
         print("⚠️  Aucun bin Ed0/Es apparié -- vérifier que le traitement L1BQC a été fait "
               "(relancer avec --process) et que la fenêtre COPS chevauche des données pySAS.")
         return
 
-    os.makedirs(OUT_DIR, exist_ok=True)
-    csv_path = os.path.join(OUT_DIR, "Ed0_vs_Es_matched_bins.csv")
+    os.makedirs(out_dir, exist_ok=True)
+    csv_path = os.path.join(out_dir, "Ed0_vs_Es_matched_bins.csv")
     df.to_csv(csv_path, index=False)
     print(f"📋 Bins appariés : {csv_path}")
 
-    cpc.plot_ed0_es_per_wavelength(df, OUT_DIR, label=label)
+    cpc.plot_ed0_es_per_wavelength(df, out_dir, label=label)
 
 
 if __name__ == "__main__":

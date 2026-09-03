@@ -136,6 +136,22 @@ def process_heading_interpolation(outfn, plot_dir):
             h5f[dataset_path][...] = heading_data
 
 
+# --- FONCTION : CORRECTION DE L'OFFSET D'ORIENTATION DE LA TOUR (HEADING) ---
+def process_heading_offset(outfn, offset_value=0.0):
+    """Applique un offset statique sur le cap SAS (orientation de la tour) en place --
+    corrige un biais de montage/référence, distinct de l'interpolation des trous NaN
+    faite par process_heading_interpolation (appelée avant celle-ci)."""
+    if not offset_value:
+        return
+    with h5py.File(outfn, "r+") as h5f:
+        heading_path = "/UMTWR_v0.tdf/HEADING"
+        if heading_path in h5f:
+            heading_data = h5f[heading_path][...]
+            heading_data['SAS'] = (heading_data['SAS'] + offset_value) % 360
+            h5f[heading_path][...] = heading_data
+            print(f"    🗼 Offset d'orientation de la tour appliqué ({offset_value}°) sur {os.path.basename(outfn)}")
+
+
 # --- FONCTION 2 : CORRECTION DE L'OFFSET DE ROLL ---
 def process_roll_offset(outfn, offset_value=-5.0):
     """Applique un offset statique sur le Roll en place."""
@@ -258,7 +274,8 @@ def process_time_offset(outfn, offset_seconds):
 
 
 # --- FONCTION MAÎTRESSE APPELÉE PAR LE BATCH ---
-def correct_L1A_file(inpath, outpath, fn, roll_offset, pitch_offset=0.0, fix_clock_drift=False):
+def correct_L1A_file(inpath, outpath, fn, roll_offset, pitch_offset=0.0, tower_offset=0.0,
+                      fix_clock_drift=False):
     """Copie le fichier et applique séquentiellement les corrections requises."""
     infn = os.path.join(inpath, fn)
     outfn = os.path.join(outpath, fn)
@@ -277,6 +294,7 @@ def correct_L1A_file(inpath, outpath, fn, roll_offset, pitch_offset=0.0, fix_clo
         else:
             print(f"    ⚠️  Impossible de calculer la dérive d'horloge pour {fn} (pas de $GPRMC valide).")
     process_heading_interpolation(outfn, plot_dir)
+    process_heading_offset(outfn, offset_value=tower_offset)
     process_roll_offset(outfn, offset_value=roll_offset)
     process_pitch_offset(outfn, offset_value=pitch_offset)
 
