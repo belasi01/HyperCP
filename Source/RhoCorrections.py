@@ -98,8 +98,9 @@ class RhoCorrections:
 
                 # |M99 - Z17| is an estimation of model error added to MC M99 uncertainty
                 # in quadrature to give combined uncertainty
-                pct_diff = np.abs(rhoScalar - zhang) / rhoScalar  # relative units
-                tot_diff = np.sqrt(Delta ** 2 + pct_diff ** 2)
+                mn_diff = np.abs(rhoScalar - ((rhoScalar + zhang)/2))/rhoScalar  # mean difference between models
+                # pct_diff = np.abs(rhoScalar - zhang) / rhoScalar  # relative units
+                tot_diff = np.sqrt(Delta ** 2 + mn_diff ** 2)
                 tot_diff[np.isnan(tot_diff) is True] = 0  # ensure no NaNs are present in the uncertainties.
                 tot_diff = tot_diff * rhoScalar  # ensure difference is in proper units
                 # add back in filtered wavelengths
@@ -235,6 +236,19 @@ class RhoCorrections:
 
         return rhoVector, rhoDelta
 
+
+    #TODO: Add Bulgarelli et al. (2026) static method here:
+    @staticmethod
+    def BulgarelliCorr(windSpeedMean, AOD, cloud, sza, wTemp, sal, relAz, sva, waveBands, Propagate = None, db = None):
+        """
+        PLACEHOLDER
+        """
+        logging.writeLogFileAndPrint('UNDER DEVELOPMENT. Please use another glint correction.')
+        return None, None     
+
+
+
+
     @staticmethod
     def read_Z17_LUT(ws, aod, sza, wt, sal, rel_az, sva, nwb) -> np.array:
         """
@@ -277,9 +291,9 @@ class RhoCorrections:
                         wt,
                         nwb
                     ),
-                    method="pchip", # should be cubic - temporary fix due to memory issues
-                )
-                print('Interpolating Z17 LUT using pchip (3rd order Hermitian Polynomial) method')
+                    method="pchip", 
+                    )
+                print('Interpolating Z17 LUT')
             else:
                 zhang_interp = spin.interpn(
                     points=(
@@ -301,9 +315,10 @@ class RhoCorrections:
                         wt,
                         nwb
                     ),
-                    method="cubic",
+                    method="pchip",
                 )
-                print('Interpolating Z17 LUT using cubic method')
+                # print('Interpolating Z17 LUT using cubic method')
+                print('Interpolating Z17 LUT')
 
             logging.writeLogFileAndPrint(f'Zhang17 LUT Elapsed Time: {time.time() - tic:.1f} s')
 

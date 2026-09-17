@@ -34,6 +34,8 @@ class ProcessL1b_Interp:
                 for ds in gpsGroup.datasets:
                     if ds != 'DATETIME':
                         gpsGroup.datasets[ds].datasetToColumns()
+            if gp.id.startswith("DALEC_GPS"):
+                gpsGroup = gp
             if gp.id == ("ANCILLARY_METADATA"):
                 ancGroup = gp
             if gp.id.startswith("ES"):
@@ -66,9 +68,16 @@ class ProcessL1b_Interp:
         newAncGroup.attributes = ancGroup.attributes.copy()
 
         # GPS can come from GPS group (preferred) or Ancillary group (can it ever come from SunTracker?)
+        # TJ - Yes (sort of!). For so-rad we need to explitly use the coordinates in the ST group here,
+        # otherwise the so-rads internal GPS is overwritten by the ancillary
         latData,lonData,courseData,sogData = None,None,None,None
         if gpsGroup is not None:
             # Flip these data into the new Ancillary group
+
+            # if STGroup is not None and STGroup.id.lower().endswith("dalec"):
+            #     latData = ProcessL1b_Interp.convertDataset(gpsGroup, "LATPOS", newAncGroup, "LATITUDE")
+            #     lonData = ProcessL1b_Interp.convertDataset(gpsGroup, "LONPOS", newAncGroup, "LONGITUDE")
+
             if 'CalFileName' in gpsGroup.attributes:
                 if gpsGroup.attributes["CalFileName"].startswith("GPRMC"): #pySAS, SolarTracker with GPS TDF input
                     latData = ProcessL1b_Interp.convertDataset(gpsGroup, "LATPOS", newAncGroup, "LATITUDE")
@@ -76,6 +85,10 @@ class ProcessL1b_Interp:
                     courseData = ProcessL1b_Interp.convertDataset(gpsGroup, "COURSE", newAncGroup, "COURSE")
                     sogData = ProcessL1b_Interp.convertDataset(gpsGroup, "SPEED", newAncGroup, "SPEED")
                     newAncGroup.datasets['SPEED'].id="SOG"
+
+                elif gpsGroup.attributes["CalFileName"].startswith('DALEC'): # DALEC_GPS
+                    latData = ProcessL1b_Interp.convertDataset(gpsGroup, "LAT", newAncGroup, "LATITUDE")
+                    lonData =ProcessL1b_Interp.convertDataset(gpsGroup, "LON", newAncGroup, "LONGITUDE")
 
                 elif gpsGroup.attributes["CalFileName"] == 'GPS_MSDA': # MSDA_XE merged GPS
                     latData = ProcessL1b_Interp.convertDataset(gpsGroup, "LATITUDE", newAncGroup, "LATITUDE")
@@ -85,14 +98,30 @@ class ProcessL1b_Interp:
                     latData = ProcessL1b_Interp.convertDataset(gpsGroup, "LATPOS", newAncGroup, "LATITUDE")
                     lonData =ProcessL1b_Interp.convertDataset(gpsGroup, "LONPOS", newAncGroup, "LONGITUDE")
 
-
                 newAncGroup.attributes['GPS_Source'] = gpsGroup.attributes['CalFileName']
+
+        elif STGroup is not None and STGroup.id.endswith("sorad"):
+
+            # This is the case where GPS is part of a suntracker group for sorad
+            ProcessL1b_Interp.convertDataset(STGroup, "LATITUDE", newAncGroup, "LATITUDE")
+            ProcessL1b_Interp.convertDataset(STGroup, "LONGITUDE", newAncGroup, "LONGITUDE")
+            latData = newAncGroup.getDataset("LATITUDE")
+            lonData = newAncGroup.getDataset("LONGITUDE")
+            newAncGroup.attributes["SOURCE"] = 'SUNTRACKER_sorad'
+            newAncGroup.attributes["CalFileName"] = 'SUNTRACKER_sorad'
+
+        # elif STGroup is not None and STGroup.id.lower().endswith("dalec"):
+        #     # Here the GPS group is DALEC_GPS
+        #     ProcessL1b_Interp.convertDataset(STGroup, "LATITUDE", newAncGroup, "LATITUDE")
+
         else:
             # TODO: If GPS is part of the SunTracker group, and gpsGroup was not yet established, pull Lat/Lon from Suntracker Group
-            #       Have not encountered this yet ^^
+            #        ^^. TJ - I did this for sorad above
             latData = ProcessL1b_Interp.convertDataset(ancGroup, "LATITUDE", newAncGroup, "LATITUDE")
             lonData =ProcessL1b_Interp.convertDataset(ancGroup, "LONGITUDE", newAncGroup, "LONGITUDE")
             newAncGroup.attributes['GPS_Source'] = ancGroup.id
+
+
 
         # These data parameters can come from SunTracker (preferred) or ancillary group
         relAzData,szaData,solAzData, tiltData = None,None,None,None
@@ -112,7 +141,7 @@ class ProcessL1b_Interp:
                 if ds == 'TILT':
                     tiltData = ProcessL1b_Interp.convertDataset(STGroup, "TILT", newAncGroup, "TILT")
                     newAncGroup.attributes['Tilt_Source'] = STGroup.attributes['CalFileName']
-
+               
         if THSGroup is not None and tiltData is None:
             for ds in THSGroup.datasets:
                 if ds == 'TILT':
@@ -362,14 +391,14 @@ class ProcessL1b_Interp:
             the sensor dataset. This also adds a temporary column in the sensor data
             array for datetime to be used in interpolation. This is later removed, as
             HDF5 does not support datetime. '''
-
+    
         dataset = group.getDataset(datasetName)
         dateData = group.getDataset("DATETAG")
         timeData = group.getDataset("TIMETAG2")
         dateTimeData = group.getDataset("DATETIME")
 
         # Convert degrees minutes to decimal degrees format; only for GPS, not ANCILLARY_METADATA
-        if group.id.startswith("GP"):
+        if group.id.startswith("GP") :
             if group.id == "GPS_MSDA":
                 if newDatasetName == "LATITUDE":
                     # for i in range(dataset.data.shape[0]):

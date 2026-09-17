@@ -28,7 +28,7 @@ from Source.SeaBASSHeaderWindow import SeaBASSHeaderWindow
 # from Source.Utilities import Utilities
 import Source.utils.filing as filing
 
-VERSION = "1.2.16"
+VERSION = "1.2.17a"
 
 
 class Window(QtWidgets.QWidget):
@@ -38,11 +38,8 @@ class Window(QtWidgets.QWidget):
         self.inputDirectory = ""
         self.outputDirectory = ""
         self.ancFileDir = ""
-        # self.options = QtWidgets.QFileDialog.Options()
-        # self.options |= QtWidgets.QFileDialog.DontUseNativeDialog
 
         super().__init__(parent)
-        # self.setStyleSheet("background-color: #e3e6e1;")
 
         icon_path = os.path.join(os.path.dirname(__file__), 'Data', 'Img', 'logo.ico')
         # load_icon = Image.open(icon_path)
@@ -52,7 +49,7 @@ class Window(QtWidgets.QWidget):
         self.setWindowIcon(QtGui.QIcon(icon_path))
 
         # Create - if inexistent - directories Plots, Config and Logs
-        hypercpDirs = ["Plots", "Config", "Logs"]
+        hypercpDirs = ["Config", "Logs"]
         for directory in hypercpDirs:
             dirPath = os.path.join(CODE_HOME, directory)
             if not os.path.exists(dirPath):
@@ -61,19 +58,16 @@ class Window(QtWidgets.QWidget):
         # Confirm that core data files are in place. Download if necessary.
         fpfZhang = os.path.join(CODE_HOME, "Data", "Zhang_rho_db_expanded.mat")
         if not os.path.exists(fpfZhang):
-            # Utilities.downloadZhangDB(fpfZhang)
             filing.downloadZhangDB(fpfZhang)
 
         # Confirm that core data files are in place. Download if necessary.
         fpfZhangLUT = os.path.join(CODE_HOME, "Data", "Z17_LUT_40.nc")
         if not os.path.exists(fpfZhangLUT):
-            # Utilities.downloadZhangLUT(fpfZhangLUT)
             filing.downloadZhangLUT(fpfZhangLUT)
 
         # Confirm that core data files are in place. Download if necessary.
         fpfZhangLUT = os.path.join(CODE_HOME, "Data", "Z17_LUT_30.nc")
         if not os.path.exists(fpfZhangLUT):
-            # Utilities.downloadZhangLUT(fpfZhangLUT)
             filing.downloadZhangLUT(fpfZhangLUT)
 
         self.initUI()
@@ -83,8 +77,8 @@ class Window(QtWidgets.QWidget):
         # Main window configuration restore
         MainConfig.loadConfig(
             MainConfig.fileName, VERSION
-        )  # VERSION in case it has to make new
-        MainConfig.settings["version"] = VERSION  # VERSION to update if necessary
+        )
+        MainConfig.settings["version"] = VERSION
 
         # Test that current In/Out folders and ancillary file are valid
         if not os.path.isdir(MainConfig.settings["inDir"]):
@@ -98,8 +92,6 @@ class Window(QtWidgets.QWidget):
 
         # Banner
         banner = QtWidgets.QLabel(self)
-        # pixmap = QtGui.QPixmap('./Data/banner.jpg')
-        # pixmap = QtGui.QPixmap('./Data/Img/with_background_530x223.png')
         pixmap = QtGui.QPixmap(
             os.path.join(CODE_HOME, "Data", "Img", "banner_530x151.png")
         )
@@ -203,8 +195,6 @@ class Window(QtWidgets.QWidget):
         ########################################################################################
         # Add QtWidgets to the Window
         ########################################################################################
-
-        # vBox = vertical box layout
         vBox = QtWidgets.QVBoxLayout()
 
         vBox.addWidget(banner)
@@ -286,7 +276,8 @@ class Window(QtWidgets.QWidget):
         if value != MainConfig.settings['cfgFile']:
             if not MainConfig.settings['cfgFile']:
                 MainConfig.settings['cfgFile'] = value
-            ConfigFile.saveConfig(MainConfig.settings['cfgFile'])
+            if MainConfig.settings['deleteConfig'] is False:
+                ConfigFile.saveConfig(MainConfig.settings['cfgFile'])
             MainConfig.settings["cfgFile"] = value
         index = self.configComboBox.findText(MainConfig.settings["cfgFile"])
         self.configComboBox.setCurrentIndex(index)
@@ -321,7 +312,7 @@ class Window(QtWidgets.QWidget):
         # MainConfig.saveConfig(MainConfig.fileName)
 
     def configNewButtonPressed(self):
-        print("New Config Dialogue")
+        # print("New Config Dialogue")
         fileName, ok = QtWidgets.QInputDialog.getText(
             self, "New Config File", "Enter File Name"
         )
@@ -357,7 +348,7 @@ class Window(QtWidgets.QWidget):
             # MainConfig.saveConfig(MainConfig.fileName)
 
     def configEditButtonPressed(self):
-        print("Edit Config Dialogue")
+        # print("Edit Config Dialogue")
 
         MainConfig.saveConfig(MainConfig.fileName)
         ConfigFile.saveConfig(ConfigFile.filename)
@@ -367,7 +358,6 @@ class Window(QtWidgets.QWidget):
         inputDir = self.inputDirectory
         configPath = os.path.join(CODE_HOME, "Config", configFileName)
         if os.path.isfile(configPath):
-            # ConfigFile.loadConfig(configFileName)
             configDialog = ConfigWindow(configFileName, inputDir, self)
             configDialog.show()
         else:
@@ -375,7 +365,7 @@ class Window(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Error", message)
 
     def configDeleteButtonPressed(self):
-        print("Delete Config Dialogue")
+        # print("Delete Config Dialogue")
         configFileName = self.configComboBox.currentText()
         configPath = os.path.join(CODE_HOME, "Config", configFileName)
         if os.path.isfile(configPath):
@@ -391,6 +381,7 @@ class Window(QtWidgets.QWidget):
 
             if reply == QtWidgets.QMessageBox.Yes:
                 ConfigFile.deleteConfig(configFileName)
+                print(f'{configFileName} deleted')
         else:
             message = "Not a Config File: " + configFileName
             QtWidgets.QMessageBox.critical(self, "Error", message)
@@ -447,7 +438,7 @@ class Window(QtWidgets.QWidget):
         return self.outputDirectory
 
     def ancAddButtonPressed(self):
-        print("Ancillary File Add Dialogue")
+        # print("Ancillary File Add Dialogue")
         if self.ancFileDir == "":
             self.ancFileDir = (
                 self.inputDirectory
@@ -473,7 +464,7 @@ class Window(QtWidgets.QWidget):
         # ConfigFile.saveConfig(ConfigFile.filename)
 
     def ancRemoveButtonPressed(self):
-        print("Wind File Remove Dialogue")
+        # print("Wind File Remove Dialogue")
         self.ancFileLineEdit.setText("")
         MainConfig.settings["ancFile"] = ""
         ConfigFile.settings["ancFile"] = ""
@@ -484,7 +475,7 @@ class Window(QtWidgets.QWidget):
         # ConfigFile.saveConfig(ConfigFile.filename)
 
     def processSingle(self, lvl):
-        print("Process Single-Level")
+        # print("Process Single-Level")
 
         t0Single = time.time()
         # Load Config file
@@ -536,21 +527,18 @@ class Window(QtWidgets.QWidget):
 
         # if flag_Trios == 0:
         calibrationMap = None
-        if ConfigFile.settings["SensorType"].lower() in ["seabird", "dalec"] :
+        if ConfigFile.settings["SensorType"].lower() in ["seabird", "dalec"]:
             calibrationMap = Controller.processCalibrationConfig(
                 configFileName, calFiles
             )
         elif ConfigFile.settings["SensorType"].lower() in ["sorad", "trios", "trios es only"]:
             calibrationMap = Controller.processCalibrationConfigTrios(calFiles)
-        # elif ConfigFile.settings["SensorType"].lower() == "dalec":
-        #     calibrationMap = Controller.processCalibrationConfig(
-        #         configFileName, calFiles
-        #     )
 
         if not calibrationMap:
             print(
-                "No calibration files found. "
-                "Check Config directory for your instrument files."
+                "No calibration files found. \n"
+                "Check Config directory for your instrument files.\n"
+                "Check that calibration files are enabled in the Configuration window.\n"
             )
             return
 
@@ -588,7 +576,7 @@ class Window(QtWidgets.QWidget):
         self.processSingle("L2")
 
     def processMulti(self):
-        print("Process Multi-Level")
+        # print("Process Multi-Level")
         MainConfig.saveConfig(MainConfig.fileName)
         t0Multi = time.time()
         # Load Config file
@@ -647,7 +635,7 @@ class Window(QtWidgets.QWidget):
         self.processMulti()
 
     def popQueryCheckBoxUpdate(self):
-        print("Main - popQueryCheckBoxUpdate")
+        # print("Main - popQueryCheckBoxUpdate")
         MainConfig.settings["popQuery"] = int(self.popQueryCheckBox.isChecked())
         MainConfig.saveConfig(MainConfig.fileName)
 
@@ -735,11 +723,11 @@ class Command:
         if ConfigFile.settings["SensorType"].lower() in ["sorad", "trios", "trios es only"]:
             calibrationMap = Controller.processCalibrationConfigTrios(calFiles)
         elif ConfigFile.settings["SensorType"].lower() == "seabird":
-            print("Process Calibration Files")
+            # print("Process Calibration Files")
             filename = ConfigFile.filename
             calibrationMap = Controller.processCalibrationConfig(filename, calFiles)
         elif ConfigFile.settings["SensorType"].lower() == "dalec":
-            print("Process Calibration Files")
+            # print("Process Calibration Files")
             filename = ConfigFile.filename
             calibrationMap = Controller.processCalibrationConfig(filename, calFiles)
         else:
@@ -859,18 +847,6 @@ if __name__ == "__main__":
     level = args.level
     ancFile = args.ancFile
     multiLevel = args.multiLevel
-
-
-    # # Close splashscreen
-    # try:
-    #     import platform
-
-    #     if platform.system() in ["Windows", "Linux"]:
-    #         import pyi_splash
-
-    #         pyi_splash.close()
-    # except ImportError:
-    #     pass
 
     # If the cmd argument is given, run the Command class without the GUI
     if cmd:

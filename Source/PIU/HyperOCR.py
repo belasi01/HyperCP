@@ -17,6 +17,7 @@ import comet_maths as cm
 from Source.ProcessL1b_FRMCal import ProcessL1b_FRMCal
 
 # PIU files
+from Source.ConfigFile import ConfigFile
 from Source.PIU.BaseInstrument import BaseInstrument
 from Source.PIU.PIUDataStore import PIUDataStore as pds
 from Source.PIU.MeasurementFunctions import MeasurementFunctions as mf
@@ -66,31 +67,38 @@ class HyperOCR(BaseInstrument):
         Nd = np.asarray(list(darkData.values())).shape[1]
         for i, k in enumerate(lightData.keys()):
             wvl = str(float(k))
+    
+            # apply normailsation here as we have value per scan
+            if ConfigFile.settings['fL1bCal'] == 3:
+                Ldata = np.array(lightData[k])
+                Ddata = np.array(darkData[k])
+            else:  # if not sensor based then we apply the normalisation here
+                Ldata = np.array(lightData[k]) * (self.cal_int[s]/self.int_time[s])
+                Ddata = np.array(darkData[k]) * (self.cal_int[s]/self.int_time[s])
 
             # apply normalisation to the standard deviations used in uncertainty calculations
             if N > 25:  # normal case
-                std_light.append(np.std(lightData[k])/np.sqrt(N))
-                std_dark.append(np.std(darkData[k])/np.sqrt(Nd) )  # sigma here is essentially sigma**2 so N must sqrt
+                std_light.append(np.std(Ldata)/np.sqrt(N))
+                std_dark.append(np.std(Ddata)/np.sqrt(Nd))  # sigma here is essentially sigma**2 so N must sqrt
             elif N > 3:  # few scans, use different statistics
-                std_light.append(np.sqrt(((N-1)/(N-3))*(np.std(lightData[k]) / np.sqrt(N))**2))
-                std_dark.append(np.sqrt(((Nd-1)/(Nd-3))*(np.std(darkData[k]) / np.sqrt(Nd))**2))
+                std_light.append(np.sqrt(((N-1)/(N-3))*(np.std(Ldata) / np.sqrt(N))**2))
+                std_dark.append(np.sqrt(((Nd-1)/(Nd-3))*(np.std(Ddata) / np.sqrt(Nd))**2))
             else:
                 writeLogFileAndPrint("too few scans to make meaningful statistics")
-                return False
+                raise ValueError
 
-            ave_light.append(np.average(lightData[k]))
-            ave_dark.append(np.average(darkData[k]))
-            env_pert.append(np.abs(np.std(lightData[k])/np.average(lightData[k])))
+            ave_light.append(np.average(Ldata))
+            ave_dark.append(np.average(Ddata))
+            env_pert.append(np.abs(np.std(Ldata)/np.average(Ldata)))
 
             for x in range(N):
                 try:
-                    lightData[k][x] -= darkData[k][x]
+                    Ldata[x] -= Ddata[x]
                 except IndexError as err:
                     writeLogFileAndPrint(f"Light/Dark indexing error PIU.HypperOCR: {err}")
                     return False
 
-
-            signalAve = np.average(lightData[k])  # at this point in the code lightdata is light-dark see line 95
+            signalAve = np.average(Ldata)  # at this point in the code lightdata is light-dark see line 95
 
             if signalAve:
                 signal_noise[wvl] = pow((pow(std_light[i], 2) + pow(std_dark[i], 2))/pow(signalAve, 2), 0.5)
@@ -98,7 +106,7 @@ class HyperOCR(BaseInstrument):
             else:
                 signal_noise[wvl] = 0.0
 
-            std_signal.append(np.std(lightData[k])/signalAve)  # as % of Dark corrected signal
+            std_signal.append(np.sqrt(np.std(Ldata)**2/signalAve**2))  # as % of Dark corrected signal
 
         return dict(
             ave_Light=np.array(ave_light),
@@ -107,7 +115,7 @@ class HyperOCR(BaseInstrument):
             std_Dark=np.array(std_dark),
             Signal_std=np.array(std_signal),
             Signal_noise=signal_noise,
-            )  # output as dictionary for use in ProcessL2/PIU
+        )  # output as dictionary for use in ProcessL2/PIU
 
     def FRM(self, PDS: pds, stats, newWaveBands) -> dict[str, np.array]:
         """
@@ -127,7 +135,7 @@ class HyperOCR(BaseInstrument):
 
             # set up uncertainty propagation
             mDraws = 100  # number of monte carlo draws
-            prop = punpy.MCPropagation(mDraws, parallel_cores=1)
+            prop = punpy.MCPropagation(mDraws, parallel_cores=1)  # TODO make parallel cores 0
 
             LPU = SolveLPU(prop)
             DATA = PDS.coeff[s_type]  # retrieve dictionaries for speed
@@ -206,9 +214,11 @@ class HyperOCR(BaseInstrument):
             BD_UNCS['radcal'][ind_nocal] = 0  # set radcal uncertainty to 0 where calibration is not applied
             BD_CORR['updated_gain'] = np.mean(sample_updated_radcal_gain, axis=0)
 
-            data = np.mean(DATA['light'], axis=0)
+            # data = np.mean(DATA['light'], axis=0)
+            data = stats[s_type]['ave_Light']
             data[ind_nocal is True] = 0  # 0 out data outside of cal so it doesn't affect statistics
-            dark = np.mean(DATA['dark'], axis=0)
+            # dark = np.mean(DATA['dark'], axis=0)
+            dark = stats[s_type]['ave_Dark']
             dark[ind_nocal is True] = 0
 
             # signal uncertainties
@@ -260,6 +270,27 @@ class HyperOCR(BaseInstrument):
             BD_UNCS.update(LPU.temperature(BD_UNCS, PDS, s_type, cal_corr_signal))
             BD_CORR['ct'] = np.mean(sample_ct_corr, axis=0) - cal_corr_signal
 
+            # import matplotlib.pyplot as plt
+            # plt.figure()
+            # plt.plot(DATA['radcal_wvl'], np.mean(sample_ct_corr, axis=0), label="thermal corrected signal")
+            # plt.plot(DATA['radcal_wvl'], np.mean(sample_stab_corr, axis=0), label="uncorrected signal")
+
+            # plt.legend()
+            # plt.grid("both")
+            # plt.xlim(400, 800)
+            # low = np.argmin(np.abs(DATA['radcal_wvl'] - 400))
+            # hgh = np.argmin(np.abs(DATA['radcal_wvl'] - 800))
+            # plt.ylim(
+            #     0, 
+            #     max(
+            #         np.mean(sample_ct_corr, axis=0)[low:hgh]
+            #     ) * 1.1  # +10%
+            # )
+            # plt.xlabel("Wavelength [nm]")
+            # plt.ylabel("signal [DN]")
+            # plt.title(f"Magnitude of thermal correction in {s_type}")
+            # plt.savefig(f"{s_type}_ct_corr_mag.png")
+
             if s_type == "ES":
                 # Cosine correction
                 sol_zen = DATA['solar_zenith']
@@ -272,7 +303,7 @@ class HyperOCR(BaseInstrument):
                         sample_zen_ang,
                         sample_sol_zen,
                         sample_zen_avg_coserror
-                        ]
+                    ]
                 )
                 sample_cos_corr = prop.run_samples(
                     mf.cos_corr, [sample_ct_corr, sample_dir_rat, sample_cos_corr_comp, sample_fhemi_coserr]  # sample_cos_corr[:,ind_raw_wvl], sample_fhemi_coserr[:,ind_raw_wvl]

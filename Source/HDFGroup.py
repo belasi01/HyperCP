@@ -93,11 +93,16 @@ class HDFGroup:
 
         # Read attributes
         #print("Attributes:", [k for k in f.attrs.keys()])
-        for k in f.attrs.keys():
-            if type(f.attrs[k]) == np.ndarray:  # noqa: E721
-                self.attributes[k] = f.attrs[k]
-            else: # string attribute
+        # for k in f.attrs.keys():
+        #     if type(f.attrs[k]) == np.ndarray:  # noqa: E721
+        #         self.attributes[k] = f.attrs[k]
+        #     else: # string attribute
+        #         self.attributes[k] = f.attrs[k].decode("utf-8")
+        for k,value in f.attrs.items():
+            if isinstance(value,bytes):
                 self.attributes[k] = f.attrs[k].decode("utf-8")
+            else:
+                self.attributes[k] = f.attrs[k]
         # Read datasets
         for k in f.keys():
             item = f.get(k)
@@ -115,7 +120,8 @@ class HDFGroup:
             f = f.create_group(self.id)
             # Write attributes
             for k in self.attributes:
-                f.attrs[k] = np.string_(self.attributes[k])
+                # f.attrs[k] = np.string_(self.attributes[k])
+                f.attrs[k] = np.bytes_(self.attributes[k])
             # Write datasets
             for key,ds in self.datasets.items():
                 #f.create_dataset(ds.id, data=np.asarray(ds.data))

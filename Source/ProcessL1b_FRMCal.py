@@ -168,9 +168,15 @@ class ProcessL1b_FRMCal:
                     percent_direct_solar_irradiance[n,i] = float(
                         temp["percent_of_direct_solar_irradiance_at_target"]
                     )
+                    # Clamp negative values to 0 as they are unphysical
+                    if percent_direct_solar_irradiance[n,i] < 0:
+                        percent_direct_solar_irradiance[n,i] = 0
                     percent_diffuse_solar_irradiance[n,i] = float(
                         temp["percent_of_diffuse_atmospheric_irradiance_at_target"]
                     )
+                    # Clamp negative values to 0 as they are unphysical
+                    if percent_diffuse_solar_irradiance[n, i] < 0:
+                        percent_diffuse_solar_irradiance[n, i] = 0
                     direct_solar_irradiance[n,i] = float(
                         temp["direct_solar_irradiance_at_target_[W m-2 um-1]"]
                     )
@@ -365,7 +371,10 @@ class ProcessL1b_FRMCal:
 
     @staticmethod
     def Zong_SL_correction_matrix(LSF, n_IB: int = 3):
-        LSF[LSF<=0] = 0
+        # for row in LSF:
+        #     row[row,<=0] = 0
+        LSF = [[row[i] if row[i] > 0 else 0 for i in range(len(row))] for row in LSF]
+        # LSF[LSF<=0] = 0
         SDF = np.copy(LSF)
         for i in range(len(LSF)):
         # for j in range(len(LSF)):
@@ -374,7 +383,7 @@ class ProcessL1b_FRMCal:
             j2 = i+n_IB
             if j1 <= 0:
                 j1 = 0
-            IB = LSF[i,j1:j2+1]
+            IB = LSF[i][j1:j2+1]
             IBsum = np.sum(IB)
             if np.sum(IB) == 0:
                 IBsum = 1.0

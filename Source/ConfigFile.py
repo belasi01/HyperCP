@@ -5,7 +5,8 @@ import os
 import shutil
 import threading
 
-from Source import PATH_TO_CONFIG#, PACKAGE_DIR
+from Source import PATH_TO_CONFIG
+from Source.MainConfig import MainConfig
 
 
 class ConfigFile:
@@ -25,7 +26,7 @@ class ConfigFile:
     def createDefaultConfig(fileName, new=1):
         # Generates the default configuration
         # fileName: the filename of the configuration file without path
-        print("ConfigFile - Create Default Config, or fill in newly added parameters with default values.")
+        # print("ConfigFile - Create Default Config, or fill in newly added parameters with default values.")
 
         if not fileName.endswith(".cfg"):
             fileName = fileName + ".cfg"
@@ -115,10 +116,13 @@ class ConfigFile:
         # Multical config defaults
         ConfigFile.settings['MultiCal'] = 0 # 0: most recent prior to acquisition, 1: pre-post average, 2: choose cal
         for multiCalOpt in ['preCal', 'postCal', 'chooseCal']:
+            ConfigFile.settings['%s_defined' % multiCalOpt] = False
             for sensorType in ['ES', 'LT', 'LI']:
                 # RADCAL filename instead if selected in Source/CalCharWindow.py options.
                 ConfigFile.settings['%s_%s' % (multiCalOpt, sensorType)] = None
-
+        ConfigFile.settings['pre_postCal_defined'] = False
+        # pre-/post-cal check status (defined for each sensorType)
+        ConfigFile.settings['pre_post_check'] = {}
 
         ConfigFile.settings["fL1bInterpInterval"] = 3.3 #3.3 is nominal HyperOCR; Brewin 2016 uses 3.5 nm
         ConfigFile.settings["bL1bPlotTimeInterp"] = 0
@@ -147,7 +151,7 @@ class ConfigFile:
         ConfigFile.settings["bL2EnablePercentLt"] = 1
         ConfigFile.settings["fL2PercentLt"] = 10 # 5% Hooker et al. 2002, Hooker and Morel 2003; <10% IOCCG Protocols
 
-        ConfigFile.settings["fL2RhoSky"] = 0.0256 # Mobley 1999
+        ConfigFile.settings["bL2B26Rho"] = 0 # D'Alimonte et al. in progress
         ConfigFile.settings["bL23CRho"] = 0
         ConfigFile.settings["bL2Z17Rho"] = 0
         ConfigFile.settings["bL2M99Rho"] = 1
@@ -224,7 +228,10 @@ class ConfigFile:
     # Saves the cfg file
     @staticmethod
     def saveConfig(filename):
-        print(f"ConfigFile - Save Config: {filename}")
+        # import traceback
+        # print("saveConfig was called from:")
+        # traceback.print_stack() 
+        # print(f"ConfigFile - Save Config: {filename}")
         ConfigFile.filename = filename
         params = dict(ConfigFile.settings, **ConfigFile.products)
         # params['calibrationPath'] = os.path.relpath(params['calibrationPath'])
@@ -285,7 +292,7 @@ class ConfigFile:
     # Deletes a config
     @staticmethod
     def deleteConfig(filename):
-        print("ConfigFile - Delete Config")
+        # print("ConfigFile - Delete Config")
         configPath = os.path.join(PATH_TO_CONFIG, filename)
         seabassPath = os.path.join(PATH_TO_CONFIG, filename.split('.')[0], "hdr")
         if "seaBASSHeaderFileName" in ConfigFile.settings:
@@ -293,12 +300,12 @@ class ConfigFile:
             if os.path.isfile(seabassPath):
                 os.remove(seabassPath)
         if os.path.isfile(configPath):
-            ConfigFile.filename = filename
-            os.remove(configPath)
             shutil.rmtree(ConfigFile.getCalibrationDirectory())
-        if os.path.isfile(seabassPath):
-            os.remove()
-
+            # Tricky, because the MainConfig pulldown change will save the old config before opening the new one, by default
+            ConfigFile.filename = ''#filename
+            MainConfig.settings['cfgFile'] = ''
+            MainConfig.settings['deleteConfig'] = True
+            os.remove(configPath)
 
     @staticmethod
     def getCalibrationDirectory():
@@ -309,29 +316,30 @@ class ConfigFile:
 
     @staticmethod
     def refreshCalibrationFiles():
-        print("ConfigFile - refreshCalibrationFiles")
+        # print("ConfigFile - refreshCalibrationFiles")
         files = os.listdir(ConfigFile.getCalibrationDirectory())
 
         newCalibrationFiles = {}
         calibrationFiles = ConfigFile.settings["CalibrationFiles"]
+        viableList = ['.cal','.tdf','.ini']
 
         for file in files:
-            if file in calibrationFiles:
-                newCalibrationFiles[file] = calibrationFiles[file]
-            else:
-                newCalibrationFiles[file] = {"enabled": 0, "frameType": "Not Required"}
+            if os.path.splitext(file)[1] in viableList:
+                if file in calibrationFiles:
+                    newCalibrationFiles[file] = calibrationFiles[file]
+                else:
+                    newCalibrationFiles[file] = {"enabled": 0, "frameType": "Not Required"}
 
         ConfigFile.settings["CalibrationFiles"] = newCalibrationFiles
 
     @staticmethod
     def setCalibrationConfig(calFileName, enabled, frameType):
-        print("ConfigFile - setCalibrationConfig")
-        calibrationFiles = ConfigFile.settings["CalibrationFiles"]
-        calibrationFiles[calFileName] = {"enabled": enabled, "frameType": frameType}
+        # print("ConfigFile - setCalibrationConfig")
+        ConfigFile.settings["CalibrationFiles"][calFileName] = {"enabled": enabled, "frameType": frameType}
 
     @staticmethod
     def getCalibrationConfig(calFileName):
-        print("ConfigFile - getCalibrationConfig")
+        # print("ConfigFile - getCalibrationConfig")
         calibrationFiles = ConfigFile.settings["CalibrationFiles"]
         return calibrationFiles[calFileName]
     

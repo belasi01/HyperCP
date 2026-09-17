@@ -68,13 +68,17 @@ class HDFRoot:
 
             # Read attributes
             #print("Attributes:", [k for k in f.attrs.keys()])
-            for k in f.attrs.keys():
+            # for k in f.attrs.keys():
+            for k,value in f.attrs.items():
                 # Need to check values for non-character encoding
-                value = f.attrs[k]
-                if value.__class__ is np.ndarray:
-                    root.attributes[k] = value
-                else:
+                # value = f.attrs[k]
+                # if value.__class__ is np.ndarray:
+                #     root.attributes[k] = value
+                # else:
+                if isinstance(value, bytes):
                     root.attributes[k] = f.attrs[k].decode("utf-8")
+                else:
+                    root.attributes[k] = value
                 # Use the following when using h5toh4 converter:
                 #root.attributes[k.replace("__GLOSDS", "")] = f.attrs[k].decode("utf-8")
             # Read groups
@@ -99,7 +103,8 @@ class HDFRoot:
             #print("Root:", self.id)
             # Write attributes
             for k in self.attributes:
-                f.attrs[k] = np.string_(self.attributes[k])
+                # f.attrs[k] = np.string_(self.attributes[k])
+                f.attrs[k] = np.bytes_(self.attributes[k])
                 # h5toh4 converter requires "__GLOSDS" to be appended
                 # to attribute name for it to be recognized correctly:
                 #f.attrs[k+"__GLOSDS"] = np.string_(self.attributes[k])

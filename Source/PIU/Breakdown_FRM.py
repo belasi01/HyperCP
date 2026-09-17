@@ -10,6 +10,7 @@ import comet_maths as cm
 
 # Source
 from Source.MainConfig import MainConfig
+from Source.ConfigFile import ConfigFile
 
 # PIU
 from Source.PIU.MeasurementFunctions import MeasurementFunctions as mf
@@ -56,7 +57,7 @@ class plottingToolsFRM:
             self.plot_spectral_FRM(s_type, wvls, BD_UNCS[s_type]['pert'],   "env perturbations",       rel_to=signal[s_type], colour=self.LABEL_COLORS["env perturbations"])
             self.plot_spectral_FRM(s_type, wvls, BD_UNCS[s_type]['clin'],   "non-linearity",           rel_to=signal[s_type], colour=self.LABEL_COLORS["non-linearity"])
             self.plot_spectral_FRM(s_type, wvls, BD_UNCS[s_type]['cSl'],    "straylight",              rel_to=signal[s_type], colour=self.LABEL_COLORS["strayLight"])
-            self.plot_spectral_FRM(s_type, wvls, BD_UNCS[s_type]['radcal'], "radiometric calibration", rel_to=signal[s_type], colour=self.LABEL_COLORS["calibration"])
+            self.plot_spectral_FRM(s_type, wvls, BD_UNCS[s_type]['radcal'], "calibration", rel_to=signal[s_type], colour=self.LABEL_COLORS["calibration"])
 
             # post normalisation
             self.plot_spectral_FRM(s_type, wvls, BD_UNCS[s_type]['stab'], "stability", rel_to=signal[s_type], colour=self.LABEL_COLORS["stability"])
@@ -81,25 +82,12 @@ class plottingToolsFRM:
             palette = plt.cm.tab20(np.linspace(0, 1, 20))
             color_cycle = cycle(palette)
 
-            ## DO PLOTS ##
-            "noise", 
-            "non-linearity", 
-            "env perturbations", 
-            "strayLight", 
-            "calibration", 
-            "stability", 
-            "temperature", 
-            "polarisation", 
-            "rho", 
-            "cosine (diffuse)",
-            "cosine (direct)",
-            "f0",   
             wvls = np.array(waveSubset)
             self.plot_spectral_FRM(meas, wvls, UNC['noise'],  "noise",                   rel_to=signal[meas], ylim=ylim, colour=self.LABEL_COLORS["noise"])
             self.plot_spectral_FRM(meas, wvls, UNC['clin'],   "non-linearity",           rel_to=signal[meas], ylim=ylim, colour=self.LABEL_COLORS["non-linearity"])
             self.plot_spectral_FRM(meas, wvls, UNC['pert'],   "env perturbations",       rel_to=signal[meas], ylim=ylim, colour=self.LABEL_COLORS["env perturbations"])
             self.plot_spectral_FRM(meas, wvls, UNC['cSl'],    "straylight",              rel_to=signal[meas], ylim=ylim, colour=self.LABEL_COLORS["strayLight"])
-            self.plot_spectral_FRM(meas, wvls, UNC['radcal'], "radiometric calibration", rel_to=signal[meas], ylim=ylim, colour=self.LABEL_COLORS["calibration"])
+            self.plot_spectral_FRM(meas, wvls, UNC['radcal'], "calibration", rel_to=signal[meas], ylim=ylim, colour=self.LABEL_COLORS["calibration"])
 
             # post normalisation
             self.plot_spectral_FRM(meas, wvls, UNC['stab'], "stability", rel_to=signal[meas], ylim=ylim, colour=self.LABEL_COLORS["stability"])
@@ -157,7 +145,7 @@ class plottingToolsFRM:
             plt.plot(x, y, label=f"{name}", color=colour)
             plt.ylabel(f"uncertainty ({unit})")
 
-        plt.title(f"FRM Breakdown: {s}, Solar Zenith: {round(self.sza, 2)}")  # provide title with sza which is relevant for uncerstanding cosine uncs
+        plt.title(f"Sensor-Specific - breakdown of {s} uncertainties, solar zenith = {round(self.sza, 2)}")  # provide title with sza which is relevant for uncerstanding cosine uncs
         plt.xlabel("Wavelength (nm)")  # x lable always wavelength in uncertainty plotting in HyperCP
 
         plt.xlim(400,800)  # standard xlim, could be changed when cal/char is updated to better cover UV range
@@ -226,7 +214,7 @@ class plottingToolsFRM:
             # Safety: handle empty or all-zero data
             if not vals or sum(vals) == 0:
                 ax.text(0.5, 0.5, "No data to display", ha='center', va='center', transform=ax.transAxes)
-                plt.title(f"{s} FRM Sensor-Specific Uncertainty: {wvl_at_indx} nm, Total: 0%", pad=20)
+                plt.title(f"{s} Sensor-Specific Uncertainty: {wvl_at_indx} nm, Total: 0%", pad=20)
                 plt.axis('off')
                 plt.tight_layout()
                 return
@@ -255,7 +243,7 @@ class plottingToolsFRM:
             ax.invert_yaxis()  # largest at top
             ax.set_xlabel(f"Uncertainty relative to {s} (%)")
             ax.set_ylabel("Contributors")
-            plt.title(f"{s} FRM Sensor-Specific Uncertainty: {wvl_at_indx} nm, Total: {round(combined, 2)}%", pad=20)
+            plt.title(f"{s} Sensor-Specific Uncertainty: {wvl_at_indx} nm, Total: {round(combined, 2)}%", pad=20)
 
             # --- Add text explaining calculation of combined uncertainty --- #
             textstr = f"Bars represent relative uncertainty in {s} signal (abscissa) at {wvl_at_indx} nm. " \
@@ -306,7 +294,7 @@ class plottingToolsFRM:
             return False
 
         if legend:
-            plt.legend()
+            plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
         if grid:
             plt.grid('both')
 
@@ -327,7 +315,7 @@ class plottingToolsFRM:
             finally:
                 umask(orig_umask)
 
-        plt.savefig(fp)
+        plt.savefig(fp, bbox_inches='tight')
         plt.close()
 
     @staticmethod
@@ -382,6 +370,52 @@ class SolveLPU:
         LPU_UNCS['alpha'] = np.sqrt(
             (1/S12**2)**2 * UNC['S1']**2 +
             ((S12 - 2*DATA['S1']) / S12**3)**2 * LPU_UNCS['S12']
+        )
+        # Align class-based alpha values and uncertainties with the
+        # calibrated pixel space used by the LPU alpha uncertainty.
+        cb_alpha = np.asarray(DATA['cb_alpha'])
+        cb_alpha_unc = np.asarray(UNC['cb_alpha'])
+        common_cal_pix = np.asarray(
+            PDS.l1ACommonCalPix255,
+            dtype=bool
+        )
+
+        if cb_alpha.shape != cb_alpha_unc.shape:
+            raise ValueError(
+                f"{s} cb_alpha mismatch: "
+                f"{cb_alpha.size} coefficients and "
+                f"{cb_alpha_unc.size} uncertainties."
+            )
+
+        if cb_alpha.size == LPU_UNCS['alpha'].size:
+            # Already on the common calibrated-pixel grid.
+            cb_alpha_common = cb_alpha
+            cb_alpha_unc_common = cb_alpha_unc
+
+        elif (
+            cb_alpha.size == common_cal_pix.size
+            and np.count_nonzero(common_cal_pix)
+            == LPU_UNCS['alpha'].size
+        ):
+            # Full detector grid: select commonly calibrated pixels.
+            cb_alpha_common = cb_alpha[common_cal_pix]
+            cb_alpha_unc_common = cb_alpha_unc[common_cal_pix]
+
+        else:
+            raise ValueError(
+                f"Unexpected {s} cb_alpha dimensions: "
+                f"{cb_alpha.size} detector values, "
+                f"{common_cal_pix.size} mask values, and "
+                f"{LPU_UNCS['alpha'].size} LPU alpha values."
+            )
+
+        if ConfigFile.settings['SensorType'].lower() == "seabird":
+            no_lin_corr = cb_alpha_common == 0
+        else:
+            no_lin_corr = cb_alpha_common == -2e-7
+
+        LPU_UNCS['alpha'][no_lin_corr] = (
+            cb_alpha_unc_common[no_lin_corr]
         )
 
         return LPU_UNCS
@@ -513,6 +547,7 @@ class SolveLPU:
         if s.upper() == "ES":  # irradiance does not use a Panel
             return LAMP_mag / (S1*10)
         else:  # Radiance
+            np.seterr(divide='ignore')
             return (LAMP_mag * np.mean(sample_PANEL, axis=0)) / (np.pi*S1*10)
 
     def temperature(self, LPU_UNCS: dict[str, np.array], PDS: PIUDataStore, s: str, radcal_signal) -> dict[str, np.array]:

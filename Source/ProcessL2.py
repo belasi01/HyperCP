@@ -31,6 +31,7 @@ from Source.utils import dating
 from Source.utils import filtering
 from Source.utils import comparing
 from Source.utils import F0ing
+from Source.utils.uncertainties import unc_management as um
 
 
 class ProcessL2:
@@ -201,12 +202,12 @@ class ProcessL2:
             # Reverts to primary mode even on threshold trip in cases where no 870nm available
             if ρ1 < threshold or not ρ870:
                 ε = (α1*ρ2 - ρ1)/(α1-1)
-                εnLw = (α1*ρ2*F02 - ρ1*F01)/(α1-1)    
+                εnLw = (α1*ρ2*F02 - ρ1*F01)/(α1-1)
             else:
                 logging.writeLogFileAndPrint("SimSpec threshold tripped. Using 780/870 instead.")
                 ε = (α2*ρ3 - ρ2)/(α2-1)
                 εnLw = (α2*ρ3*F03 - ρ2*F02)/(α2-1)
-            logging.writeLogFileAndPrint(f'offset(rrs) = {ε}; offset(nLw) = {εnLw}')
+            logging.writeLogFileAndPrint(f'offset(rrs) = {ε:.4f}; offset(nLw) = {εnLw:.3f}')
 
             rrsNIRCorr = ε/np.pi
             nLwNIRCorr = εnLw/np.pi
@@ -1150,20 +1151,12 @@ class ProcessL2:
             'timeTag': dating.datetime2TimeTag2(mean_datetime)
         }
 
-        # %% Get standard deviation of slice (entire slice, not just the lowest X%)
         # Drop time info, for stats functions
         for k in data_slice.keys():
             del data_slice[k]['Datetime']
             del data_slice[k]['Datetag']
             del data_slice[k]['Timetag2']
         wavelengths = np.asarray(list(data_slice['ES'].keys()), dtype=float)
-
-        # if ConfigFile.settings["SensorType"].lower() == "seabird":
-        #     raw_groups = {k: d['LIGHT'] for k, d in raw_groups.items()}
-        #     for key, group in raw_groups.items():
-        #         group.id = f'{key}_L1AQC'
-        # # elif ConfigFile.settings["SensorType"].lower() != "dalec":
-        # #     # NOTE: Temporary placeholder for DALEC stats.
 
         # %% Convolve to satellite bands
         convolve_to_satellite, satellite_bands = {}, {}
@@ -1221,8 +1214,12 @@ class ProcessL2:
         # first_band = next(iter(ltSlice))
         # first_band_values = ltSlice[first_band]
         # y=list(range(0,len(first_band_values)))
+
         stats = False
-        while percent_lt <= 50:
+        while percent_lt <= 100:
+            # Changed to 100% (no glitter filter) to allow sparser data to be processed
+            # Discussed at HCP meeting on 10/06/2026 - it is desirable that `fallback' values of percent_lt
+            # that are relaxed from the config are flagged/recorded in L2 ouput
             percentLtattr[attrEnsInd-1] = str(int(ConfigFile.settings['fL2PercentLt']))
 
             if enable_percent_lt:
@@ -1247,16 +1244,17 @@ class ProcessL2:
             else:
                 nSpecEnd = nSpecStart
 
-            stats = sensor.generateSensorStats(sensor_type, raw_groups, raw_slices, wavelengths, y)
+            stats = sensor.generateSensorStats(node, sensor_type, raw_groups, raw_slices, wavelengths, y)
+
             if isinstance(stats, bool):
                 logging.writeLogFileAndPrint("***Warning***")
                 logging.writeLogFileAndPrint(f"ProcessL2.ensemblesReflectance: too few scans after glitter removal - iterating percent_lt to {percent_lt}")
                 percent_lt += 10
             else:
                 break
-
-        if not stats:  # check if stats was generated and return False if not
-            logging.writeLogFileAndPrint("statistics not generated")
+        if ((isinstance(stats, bool) and stats is False) or  # possibly unnecessary - if stats is not an array then the process failed
+                not all([v for v in stats.values()])):  # check if stats was generated and return False if not
+            logging.writeLogFileAndPrint("statistics not (fully) generated")
             return False
 
         node.attributes['PERCENT_LT'] = ",".join(percentLtattr)
@@ -1371,46 +1369,120 @@ class ProcessL2:
         x_unc, x_breakdown_unc, x_breakdown_corr = None, None, None
         tic = time.process_time()
         if ConfigFile.settings["fL1bCal"] <= 2:  # Factory Calibration or FRM-Class Specific
-            l1b_unc, x_breakdown_unc = sensor.ClassBasedL1A(node, uncGroup, stats, x_slice)
-            if l1b_unc:
+            # PDS has all reported bands, cal'd and not cal'd, at L1A waveband centers IN FACTORY MODE
+            try:
+                PDS = PIUDataStore(node, uncGroup)  # raises NotImplementedError if TriOS-factory or Dalec selected
+                l1b_unc, x_breakdown_unc = sensor.ClassBasedL1A(uncGroup, PDS, stats)  # x_slice,
                 x_slice.update(l1b_unc)
-                # convert uncertainties back into absolute form using the signals recorded from ProcessL2
+                # convert uncertainties back into absolute form using the signals recorded from ProcessL1B
                 for k, v in slice_mean.items():
+                    # uncertainty as % multiplied by signal in radiometric units
+
                     x_slice[k.lower() + 'Unc'] = {
-                        u[0]: [u[1][0] * np.abs(s[0])] for u, s in
+                        u[0]: [um.convertToAbsolute(u[1][0], s[0])] for u, s in
                         zip(x_slice[k.lower() + 'Unc'].items(), v.values())
                     }
-                    # x_breakdown_unc[k.upper()] = {
-                    #     u[0]: [u[1] * np.abs(s[0])] for s, u in
-                    #     zip(v.values(), x_breakdown_unc[k.upper()].items())  # keys of x_breakdown_unc represent error sources
-                    # }  # TODO figure out why this doesn't work - Ashley
 
-                x_breakdown_unc['ES'] = {k: x_breakdown_unc['ES'][k] * np.abs(np.array([val[0] for val in x_slice['es'].values()])) for k in x_breakdown_unc['ES']}  # convert back to absolute
-                if ConfigFile.settings['SensorType'].lower() != "trios es only":
-                    x_breakdown_unc['LI'] = {k: x_breakdown_unc['LI'][k] * np.abs(np.array([val[0] for val in x_slice['li'].values()])) for k in x_breakdown_unc['LI']}
-                    x_breakdown_unc['LT'] = {k: x_breakdown_unc['LT'][k] * np.abs(np.array([val[0] for val in x_slice['lt'].values()])) for k in x_breakdown_unc['LT']}
-
+                # convert breakdown uncertainties to absolute and run L2 unc propagation
+                x_breakdown_unc['ES'] = {k: um.convertToAbsolute(x_breakdown_unc['ES'][k], np.array([val[0] for val in x_slice['es'].values()])) for k in x_breakdown_unc['ES']}  # convert back to absolute
                 if es_only:
                     x_unc = sensor.ClassBasedL2ESOnly(wavelengths.tolist(), x_slice)
-                    l2_bd = {}
                 else:
-                    # from Source.PIU.PIUDataStore import PIUDataStore
-                    pds = PIUDataStore(node, uncGroup)
+                    x_breakdown_unc['LI'] = {k: um.convertToAbsolute(x_breakdown_unc['LI'][k], np.array([val[0] for val in x_slice['li'].values()])) for k in x_breakdown_unc['LI']}
+                    x_breakdown_unc['LT'] = {k: um.convertToAbsolute(x_breakdown_unc['LT'][k], np.array([val[0] for val in x_slice['lt'].values()])) for k in x_breakdown_unc['LT']}
 
-                    x_unc, l2_bd = sensor.ClassBasedL2(node, uncGroup, pds, stats, rho_scalar, rho_vec, rho_unc, F0_hyper, F0_unc, wavelengths.tolist(), x_slice)
-                x_breakdown_unc.update(l2_bd)
-            elif not(ConfigFile.settings['SensorType'].lower() in ["dalec", "trios", "trios es only"] and (ConfigFile.settings["fL1bCal"] == 1)):
-                logging.writeLogFileAndPrint("ProcessL2.ensemblesReflectance: Instrument uncertainty processing failed. Aborting.")
-                return False
+                    rho_val = rho_scalar if rho_vec is None else rho_vec
+                    x_unc, l2_bd = sensor.ClassBasedL2(
+                        PDS,
+                        stats,
+                        rho_val,
+                        rho_unc,
+                        F0_hyper,
+                        F0_unc,
+                        wavelengths.tolist(),
+                        x_slice
+                    )
+                    # Patch for rho_val as dict in PR #462
+                    if isinstance(rho_val, dict):
+                        rho_val = np.asarray(list(rho_val.values()), dtype=float)
+
+                        slicedes = np.array([val[0] if k in rho_vec.keys() else -999 for k, val in x_slice['es'].items()])
+                        slicedli = np.array([val[0] if k in rho_vec.keys() else -999 for k, val in x_slice['li'].items()])
+                        slicedlt = np.array([val[0] if k in rho_vec.keys() else -999 for k, val in x_slice['lt'].items()])
+                        lw = slicedli[np.where(slicedli > -999)] - rho_val * slicedlt[np.where(slicedlt > -999)]
+                        rrs = lw / slicedes[np.where(slicedes > -999)]
+
+                        es_ = slicedes[np.where(slicedes > -999)] - rho_val * slicedes[np.where(slicedes > -999)]
+                        li_ = slicedli[np.where(slicedes > -999)] - rho_val * slicedli[np.where(slicedli > -999)]
+                        lt_ = slicedlt[np.where(slicedes > -999)] - rho_val * slicedlt[np.where(slicedlt > -999)]
+                    else:
+                        lw = np.array([val[0] for val in x_slice['lt'].values()]) - rho_val * np.array([val[0] for val in x_slice['li'].values()])
+                        rrs = lw / np.array([val[0] for val in x_slice['es'].values()])
+
+                        es_ = np.array([v[0] for v in x_slice['es'].values()])
+                        li_ = np.array([v[0] for v in x_slice['li'].values()])
+                        lt_ = np.array([v[0] for v in x_slice['lt'].values()])
+
+                    nlw = rrs * np.array(list(F0_hyper.values()))
+
+                    # update breeakdown with L2 unc components
+                    x_breakdown_unc['Lw']  = {k: um.convertToAbsolute(l2_bd['Lw'][k], lw)  for k in l2_bd['Lw']}
+                    x_breakdown_unc['Rrs'] = {k: um.convertToAbsolute(l2_bd['Rrs'][k], rrs) for k in l2_bd['Rrs']}
+                    x_breakdown_unc['nLw'] = {k: um.convertToAbsolute(l2_bd['nLw'][k], nlw) for k in l2_bd['nLw']}
+
+                    # convert L2 uncertainties back to absolute
+                    # es_ = np.array([v[0] for v in x_slice['es'].values()])
+                    # li_ = np.array([v[0] for v in x_slice['li'].values()])
+                    # lt_ = np.array([v[0] for v in x_slice['lt'].values()])
+                    lw_ = lt_ - rho_val * li_
+                    rrs_ = lw_ / es_
+                    nlw_ = rrs_ * np.array(list(F0_hyper.values()))
+
+                    x_unc['lwUNC']  *= np.abs(lw_)
+                    x_unc['rrsUNC'] *= np.abs(rrs_)
+                    x_unc['nlwUNC'] *= np.abs(nlw_)
+
+                    for satellite, vals in satellite_slice_mean.items():
+                        es_band = np.array([v[0] for v in vals['ES'].values()])
+                        li_band = np.array([v[0] for v in vals['LI'].values()])
+                        lt_band = np.array([v[0] for v in vals['LT'].values()])
+                        if rho_vec is not None:
+                            rho_band = np.array(list(convolve_to_satellite[satellite](rho_vec).values())).flatten()
+                            lw_band = lt_band - rho_band*li_band
+                        else:
+                            lw_band = lt_band - rho_val*li_band#
+
+                        rrs_band = lw_band / es_band
+                        try:
+                            f0_band = np.zeros(len(vals['ES'].keys()))
+                            for i, v in enumerate(satellite_bands_subset[satellite[:-1]]):
+                                if str(v) in vals['ES'].keys():
+                                    # we must ensure the band is included in radiometry selection
+                                    f0_band[i] = satellite_f0[satellite[:-1]][str(v)]
+                            nlw_band = rrs_band * f0_band
+                        except ValueError:
+                            print("here")
+                        x_unc[f'lwUNC_{satellite}']  *= np.abs(lw_band)
+                        x_unc[f'rrsUNC_{satellite}'] *= np.abs(rrs_band)
+                        x_unc[f'rrsUNC_{satellite}'] *= np.abs(nlw_band)
+
+            except NotImplementedError:
+                pass  # we expect TriOS factory and DALEC to raise this.
+
         elif ConfigFile.settings["fL1bCal"] == 3:  # FRM-Sensor Specific
 
-            pds = PIUDataStore(node, uncGroup, raw_groups, raw_slices)
+            PDS = PIUDataStore(node, uncGroup, raw_groups, raw_slices)
 
-            l1b_unc, x_breakdown_corr, x_breakdown_unc = sensor.FRM(pds, stats, wavelengths)
+            l1b_unc, x_breakdown_corr, x_breakdown_unc = sensor.FRM(PDS, stats, wavelengths)
             x_slice['f0'] = F0_hyper
             x_slice['f0_unc'] = F0_unc
             x_slice.update(l1b_unc)
-            x_unc = sensor.FRML2(pds, rho_scalar, rho_vec, rho_unc, wavelengths, x_slice, x_breakdown_unc)
+            if es_only:
+                x_unc = sensor.FRML2ESOnly(wavelengths, x_slice)
+            else:
+                x_unc = sensor.FRML2(PDS, rho_scalar, rho_vec, rho_unc, wavelengths, x_slice, x_breakdown_unc)
+
+        # log uncertainty processing time
         logging.writeLogFileAndPrint(f"ProcessL2.ensemblesReflectance: Uncertainty Update Elapsed Time: {time.process_time() - tic:.1f} s")
 
         # Move uncertainties to x_unc and drop samples form x_slice
@@ -1419,7 +1491,9 @@ class ProcessL2:
                 if "sample" in k.lower():
                     del x_slice[k]  # samples are no longer needed
                 elif "unc" in k.lower():
-                    x_unc[f"{k[0:2]}UNC_HYPER"] = x_slice.pop(k)  # transfer instrument uncs to x_unc
+                    x_unc[f"{k[0:2]}UNC_HYPER"] = x_slice.pop(k)
+                    # get L2 signal and make this absolute again!
+                      # transfer instrument uncs to x_unc
 
             # Extract uncertainties for convolving to satellite bands
             slice_unc = {k: v for k, v in x_unc.items() if k.endswith('UNC_HYPER')}
@@ -1479,13 +1553,14 @@ class ProcessL2:
     @staticmethod
     def calculate_rho_sky_for_ensemble(wavelengths, data_slice_mean, anc_slice):
         # Get Configuration
-        # rho_default = float(ConfigFile.settings["fL2RhoSky"]) # Not used
         rhoVector, rhoScalar, rhoUNC = None, None, None
         anc_slice['REL_AZ'] = np.abs(anc_slice['REL_AZ'])
         if int(ConfigFile.settings["bL23CRho"]):
             method = 'three_c_rho'
         elif int(ConfigFile.settings["bL2Z17Rho"]):
             method = 'zhang_rho'
+        elif int(ConfigFile.settings["bL2B26Rho"]):
+            method = 'bulgarelli_rho'
         else:
             method = 'mobley_rho'
 
@@ -1540,6 +1615,14 @@ class ProcessL2:
                                                          anc_slice['SZA'], anc_slice['SST'], anc_slice['SALINITY'],
                                                          anc_slice['REL_AZ'],
                                                          SVA, wavelengths, rho_uncertainty_obj)
+
+
+        elif method == "bulgarelli_rho":
+            #TODO: Populate this placeholder call to Propagate and RhoCorrections.D26Corr
+            rhoVector, rhoUNC = None,None
+
+
+
         elif method == "mobley_rho":
             if ConfigFile.settings["bL2RhoUnc10"] == 0:
                 # Full Mobley 1999 model from LUT
@@ -1890,11 +1973,13 @@ class ProcessL2:
                 newGrp = node.addGroup(grp.id)
                 newGrp.copy(grp)
                 for ds in newGrp.datasets:
+                    #breakpoint()
                     newGrp.datasets[ds].datasetToColumns()
                     node.attributes[f'{grp.id}_START_PIXEL'] = grp.attributes['CAL_START']
                     node.attributes[f'{grp.id}_STOP_PIXEL'] = grp.attributes['CAL_STOP']
                     node.attributes[f'{grp.id}_CalFileName'] = grp.attributes['CalFileName']
-                    node.attributes[f'{grp.id}_CalibrationDate'] = grp.attributes['CalibrationDate']
+                    if ConfigFile.settings['SensorType'].lower() != 'sorad':
+                        node.attributes[f'{grp.id}_CalibrationDate'] = grp.attributes['CalibrationDate'] # for now, skip sorad (not present)
 
         # Process stations, ensembles to reflectances, OC prods, etc.
         if not ProcessL2.stationsEnsemblesReflectance(node, root,station):

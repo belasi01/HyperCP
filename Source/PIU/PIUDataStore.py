@@ -30,16 +30,24 @@ class PIUDataStore:
     """contains class to read and store input uncertainties for PIU"""
     sensors: list = ['ES', 'LI', 'LT']
 
-    def __init__(self, root: HDFRoot, inpt: HDFGroup, raw_grps: Optional[dict[str: dict]]=None, raw_slices: Optional[dict[str:dict]]=None, create_empty: Optional[bool]=False):
+    def __init__(self, root: HDFRoot, inpt: HDFGroup, raw_grps: Optional[dict[str: dict]]=None, raw_slices: Optional[dict[str:dict]]=None):
         """ class which contains methods that provide digestable uncertainties to classes in PIU 
             converts datafile inputs into a dictionary of coefficients and uncertainties for all regimes
+
+            params:
+                root: Source.HDFRoot HDFRoot object - node containing all information from L1BQC.hdf file
+                inpt: Source.HDFGroup HDFGroup - contains uncertianty information from RAW_UNCERTAINTIES group
+            optional params - used in Sensor-Based processing:
+                raw_grps: Contains HDF groups for ES, LI and LT
+                raw_slices: Contains datasets for ES, LI and LT
         """
         if ConfigFile.settings["SensorType"].lower() == "trios es only":
             PIUDataStore.sensors = ['ES']
 
-        self.uncs:      dict = {s: {} for s in self.sensors}
+        self.uncs:      dict = {s: {} for s in self.sensors}  # initialise uncertainty and coefficient containers
         self.coeff:     dict = {s: {} for s in self.sensors}
-        self.cal_level: int = ConfigFile.settings["fL1bCal"]
+        self.cal_level: int = ConfigFile.settings["fL1bCal"]  # get calibration level from config
+        self.mDraws = 100  # monte carlo draws. Balance needs to be achived between random error (since MC is stochastic) and computation time
 
         self.cal_start: dict = {s: {} for s in self.sensors}
         self.cal_stop:  dict = {s: {} for s in self.sensors}
@@ -49,44 +57,56 @@ class PIUDataStore:
         self.wvl:         dict = {s: {} for s in self.sensors}
         self.l1ACommonCalPix: bool
         self.l1ACommonCalPix255: bool
-        self.nan_mask:    np.array = None
+        self.nan_mask: np.array = None
 
+        # this is used for displaying sza for breakdowns - important context for understanding cosine uncertainty
         ancGroup = root.getGroup("ANCILLARY")
         self.sza = round(ancGroup.getDataset("SZA").columns["SZA"][0], 2) # take to 2.d.p for outputting
-
+        
         try:
+            # if we can get station information for naming plots then save it
             ancGroup = root.getGroup("ANCILLARY")
             self.station = ancGroup.getDataset("STATION").columns["STATION"][0]
         except (AttributeError, KeyError):
             self.station = None
 
         try:
+            # if we can get time/date for cast then save here
             acqTime = dt.strptime(root.attributes['TIME-STAMP'], '%a %b %d %H:%M:%S %Y')
             self.cast = f"{self.get_regime_Name()}_{acqTime.strftime('%Y%m%d%H%M%S')}"
         except (AttributeError, KeyError):
             self.cast = None
 
-        if not create_empty:  # do not read uncs and coeffs if we are creating an empty PDS
-
-            if self.cal_level == 3:
-                [self.readCalFRM(root, inpt, raw_grps, raw_slices, sensor) for sensor in self.sensors]
-                self.readCommonPix()
+        # divide processing between regimes - different information required to be saved between CB and SB.
+        if self.cal_level == 3:
+            [self.readCalSB(root, inpt, raw_grps, raw_slices, sensor) for sensor in self.sensors]
+            self.readCommonPix()
+        else:
+            self.get_inttime(root)
+            if self.cal_level == 2:
+                [self.readCalClassBased(root,inpt, sensor) for sensor in self.sensors]
+            elif ConfigFile.settings['SensorType'].lower() == 'seabird':
+                [self.readCalFactory(root, inpt, sensor) for sensor in self.sensors]
             else:
-                self.get_inttime(root)
-                if self.cal_level == 2:
-                    [self.readCalClassBased(root,inpt, sensor) for sensor in self.sensors]
-                elif ConfigFile.settings['SensorType'].lower() == 'seabird':
-                    [self.readCalFactory(root, inpt, sensor) for sensor in self.sensors]
-                else:
-                    writeLogFileAndPrint("TriOS/Dalec factory uncertainties not implemented")
-                    raise NotImplementedError  # TODO: test behaviour of this - implemented because _init__ classes cannot have return or yeilds - Ashley
-                self.readCommonPix()
-                # finally
-                [self.read_uncertainties(root, inpt, sensor) for sensor in self.sensors]
+                writeLogFileAndPrint("TriOS/Dalec factory uncertainties not implemented")
+                raise NotImplementedError  # TODO: test behaviour of this - implemented because __init__ classes cannot have return or yeilds - Ashley
+            self.readCommonPix()
+
+            # read the uncertainties - charaxcterisation uncs from CB files in HCP.data.Class_Based_Characterizations
+            [self.read_uncertainties(root, inpt, sensor) for sensor in self.sensors]
 
     def get_inttime(self, root: HDFRoot):
+        """
+        used to get the integration time for estimating signal for conversion of uncertainties to relative
+        NOTE: Dirk maybe this is not required anymore and a better solution can be found.
+        """
         # BUG?: Why are we using the MEAN integration time of all the samples?? What does this get used for?
-        # NOTE: Why is this not called for FRM-SB?
+        # RESPONSE: this is an interesting point I did not consider. We use this since we now apply the normalisation per timestamp in lightdarkstats. 
+        # because Light and dark are normalised we need to ensure ES, LI and LT are normalised for calculating relative uncertainties otherwise we're comparing apples to oranges.
+        # however this int time is an average across scans. Since we can imagine a measurement where the int_time changes automatically during the course of the measurement, 
+        # this may not be correct for that specific case. But everything is glitter filtered and averaged at this part of the processing, so the answer is far from obvious. 
+
+        # NOTE: Why is this not called for FRM-SB? - because the SB cal files include all the information we need to calculate normalisation - Ashley.
         if ConfigFile.settings['SensorType'].lower() != 'trios es only':
             sensors = ["ES", "LI", "LT"]
         else:
@@ -117,10 +137,10 @@ class PIUDataStore:
                 # cut all 0s and first pixel
                 self.coeff[s]['int_time'] = np.mean(np.asarray(gp.datasets['INTTIME'].data.tolist()))
                 self.coeff[s]['cal_int']  = cal_int_time    # Calibration integration time (1x float)
-            elif ConfigFile.settings['SensorType'].lower() in ['trios','dalec']:
+            elif ConfigFile.settings['SensorType'].lower() in ['trios','dalec', 'sorad']:
                 gp = root.getGroup(f"{s}_L1AQC")
 
-                if ConfigFile.settings['SensorType'].lower() == 'trios':
+                if ConfigFile.settings['SensorType'].lower() == 'trios' or ConfigFile.settings['SensorType'].lower() == 'sorad':
                     cal_int_time = int(gp.getDataset(f"BACK_{s}").attributes['IntegrationTime'])
                     self.coeff[s]['int_time'] = np.mean(np.asarray(gp.datasets['INTTIME'].data.tolist())) # FILE AVERAGE sample integration time (1x float)
                 elif ConfigFile.settings['SensorType'].lower() == "dalec":
@@ -139,6 +159,10 @@ class PIUDataStore:
             self.coeff[s]['cal_int'] = cal_int_time  # Calibration integration time (1x float)
 
     def readCommonPix(self):
+        """
+        calculates the pixels used by the instrument in the case that not every pixel is calibrated. e.g. HyperOCR FICE data from PML using 180/255 channels.
+        uses radcal file to populate self.L1ACommonCalPix and self.L1ACommonCalPix255.
+        """
         # NOTE: If (rare case) any sensors have a different number of calibrated bands (e.g., pySAS sample),
         #   we need to crop to set of pixels in order to math them together.
         #   Take the pixels of the sensor with the fewest calibrated pixels. This does NOT change the sensor-specific wavebands themselves.
@@ -177,7 +201,17 @@ class PIUDataStore:
         # self.l1AReportedPix255[0:len(self.l1ACommonCalPix)] = [bool(1) for i in range(len(self.l1ACommonCalPix))]
 
     #### FRM ####
-    def readCalFRM(self, root, uncGrp, raw_grps, raw_slices, s_type):
+    def readCalSB(self, root: HDFRoot, uncGrp: HDFGroup, raw_grps: dict[str, dict], raw_slices: dict[str, dict], s_type: str) -> None:
+        """
+        Read Sensor-Based calibration information
+
+        params:
+            root - HDFRoot containing information from L1BQC.hdf file
+            uncGrp - HDFGroup with RAW_UNCERTAINTIES information
+            raw_grps - Dictionary of ES, LI, & LT L1AQC groups
+            raw_slices: dictionary of ES, LI, & LT L1AQC data
+            s_Type - sensor type as string - 'ES', 'LI', or 'LT'
+        """
         # read data
         grp = raw_grps[s_type]
 
@@ -216,11 +250,11 @@ class PIUDataStore:
         ###############
         instrument = ConfigFile.settings['SensorType'].lower()
         if instrument == "seabird":
-            radcal_raw = self.readHyperCal(grp, uncGrp, raw_slices, s_type)
+            radcal_raw = self.readOCRCal(grp, uncGrp, raw_slices[s_type], s_type)
             Nlin_CB_string = "CLASS_HYPEROCR_RADIANCE"
             calDate_string = f"{s_type}_LIGHT_L1AQC"
-        elif instrument in ["trios", "trios es only"]:
-            radcal_raw = self.readTriOSCal(grp, uncGrp, raw_slices, s_type)
+        elif instrument in ["trios", "trios es only","sorad"]:
+            radcal_raw = self.readTriOSCal(grp, uncGrp, raw_slices[s_type], s_type)
             Nlin_CB_string = "CLASS_RAMSES_RADIANCE"
             calDate_string = f"{s_type}_L1AQC"
         else:
@@ -305,10 +339,10 @@ class PIUDataStore:
             # each value has 4 numbers azi = 0, azi = 90, -zen, +zen which need their TU uncertainties combining
             total_coserror_err = np.sqrt(
                 self.uncs[s_type]['cos']**2 +
-                self.uncs[s_type]['cos_90']**2 +
-                self.uncs[s_type]['cos'][:, ::-1]**2 +
-                self.uncs[s_type]['cos_90'][:, ::-1]**2
-                )
+                self.uncs[s_type]['cos_90']**2 # +  # i think this is double counting
+                # self.uncs[s_type]['cos'][:, ::-1]**2 +
+                # self.uncs[s_type]['cos_90'][:, ::-1]**2
+            )
 
             # comparing cos_error for symetric zenith (ideally would be 0)
             zen_avg_coserr = (azi_avg_coserr + azi_avg_coserr[:, ::-1]) / 2.
@@ -391,19 +425,44 @@ class PIUDataStore:
         self.ind_rad_wvl[s_type] = ind_rad_wvl
         self.wvl[s_type] = np.array(radcal.columns['1'])
 
-    def readHyperCal(self, grp, uncGrp, raw_slices, s_type):
+    def readOCRCal(self, grp: HDFGroup, uncGrp: HDFGroup, raw_slices: dict[str, dict], s_type: str) -> np.array:
+        """
+            read calibration specific to Seabird HyperOCR systems (could be moved to HyperOCR class?)
+
+            params:
+                grp - L1AQC group for the sensor specified by s_type
+                uncGrp - RAW_UNCERTAINTIES group
+                raw_slices - dictionary of raw data for sensor s_type
+                s_type - chosen sensor
+
+            returns:
+                radcal_raw - radcal column 2, raw calibration data
+        """
         radcal_raw = self.read_cal(uncGrp, s_type, '_RADCAL_CAL', '2', return_df=True)
-        self.coeff[s_type]['light'] = np.asarray(list(raw_slices[s_type]['LIGHT']['data'].values())).transpose()
-        self.coeff[s_type]['dark']  = np.asarray(list(raw_slices[s_type]['DARK']['data'].values())).transpose()
+        self.coeff[s_type]['light'] = np.asarray(list(raw_slices['LIGHT']['data'].values())).transpose()
+        self.coeff[s_type]['dark']  = np.asarray(list(raw_slices['DARK']['data'].values())).transpose()
         # self.coeff[s_type]['int_time'] = np.mean(np.asarray(grp.getDataset("INTTIME").data.tolist()))
         self.coeff[s_type]['int_time'] = np.mean(np.asarray(grp['LIGHT'].getDataset("INTTIME").data.tolist())) # BUG?: This is a mean int_time for the whole series?!?
         self.coeff[s_type]['cal_int'] = radcal_raw.pop(0)
 
         return radcal_raw
 
-    def readTriOSCal(self, grp, uncGrp, raw_slices, s_type):
+    def readTriOSCal(self, grp: HDFGroup, uncGrp: HDFGroup, raw_slices: dict[str, dict], s_type) -> np.array:
+        """
+            read calibration specific to TriOS RAMSES systems (could be moved to TriOS class?)
+
+            params:
+                grp - L1AQC group for the sensor specified by s_type
+                uncGrp - RAW_UNCERTAINTIES group
+                raw_slices - dictionary of raw data for sensor s_type
+                s_type - chosen sensor
+
+            returns:
+                radcal_raw - radcal column 2, raw calibration data
+        """
         radcal_raw = np.array([rc[0] for rc in grp.getDataset(f"CAL_{s_type}").data])
-        raw_data = np.asarray(list(raw_slices[s_type]['data'].values())).transpose() / 65535.0
+        #raw_data = np.asarray(list(raw_slices[s_type]['data'].values())).transpose() / 65535.0
+        raw_data = np.asarray(list(raw_slices['data'].values())).transpose() / 65535.0
         DarkPixelStart = int(grp.attributes["DarkPixelStart"])
         DarkPixelStop = int(grp.attributes["DarkPixelStop"])
         int_time = np.asarray(grp.getDataset("INTTIME").data.tolist())
@@ -425,6 +484,14 @@ class PIUDataStore:
 
     #### Class-Based ####
     def readCalClassBased(self, node: HDFRoot, inpt: HDFGroup, s: str) -> None:
+        """
+            reads class based calibration and stores it.
+
+            params:
+                node - all data from L1BQC.hdf file
+                inpt - contains uncertianty information from RAW_UNCERTAINTIES group
+                s - sensor name as string 'ES', 'LI', & 'LT' 
+        """
         # Class-regime RAW_UNCERTAINTIES remove 0th RADCAL_CAL pixel.
         # 255 bands from FidRadDB. Zeroed bands should be for unreported bands.
         radcal255 = self.extract_unc_from_grp(inpt, f"{s}_RADCAL_CAL")
@@ -457,9 +524,17 @@ class PIUDataStore:
         ind_rad_wvl[0:self.cal_start[s]] = False
         ind_rad_wvl[self.cal_stop[s]+1:] = False
         self.ind_rad_wvl[s] = ind_rad_wvl
-        self.wvl[s] = np.array(radcal.columns['1'])
+        self.coeff[s]['radcal_wvl'] = np.array(radcal.columns['1'])
 
     def readCalFactory(self, node: HDFRoot, inpt: HDFGroup, s: str) -> None:
+        """
+            reads Class-Based calibration and stores it but also gets factory cal from Sirrex-7 paper instead of Radcal files.
+
+            params:
+                node - all data from L1BQC.hdf file
+                inpt - contains uncertianty information from RAW_UNCERTAINTIES group
+                s - sensor name as string 'ES', 'LI', & 'LT' 
+        """
         # For SeaBird Factory, these are interpolated from Sirrex-7 to
         #   reported bands, not from FidRadDB files
         radcal = self.extract_unc_from_grp(inpt, f"{s}_RADCAL_UNC")
@@ -482,13 +557,21 @@ class PIUDataStore:
         ind_rad_wvl[self.cal_stop[s]+1:] = False
 
         self.ind_rad_wvl[s] = ind_rad_wvl
-        self.wvl[s] = np.array(radcal.columns['wvl'])
+        self.coeff[s]['radcal_wvl'] = np.array(radcal.columns['wvl'])
 
-    def read_uncertainties(self, root, inpt: HDFGroup, s: str) -> None:
+    def read_uncertainties(self, root: HDFRoot, inpt: HDFGroup, s: str) -> None:
+        """
+            reads characterisation uncertainties from Class-Based files stored in HCP.data.Class_Based_Characterisation
+            params:
+                node: all data from L1BQC.hdf file
+                inpt: contains uncertianty information from RAW_UNCERTAINTIES group
+                s: sensor name as string 'ES', 'LI', & 'LT' 
+        """
+
         instrument = ConfigFile.settings['SensorType'].lower()
         if instrument == "seabird":
             calDate_string = f"{s}_LIGHT_L1AQC"
-        elif instrument in ["trios", "trios es only"]:
+        elif instrument in ["trios", "trios es only","sorad"]:
             calDate_string = f"{s}_L1AQC"
         else:
             writeLogFileAndPrint(f"{instrument} not yet implemented")
@@ -521,7 +604,7 @@ class PIUDataStore:
             if sza_range is not None:
                 if float(lw) > self.sza:
                     self.uncs[s]['cos'] = self.extract_unc_from_grp(grp=inpt, name=f"{s}_ANGDATA_COSERROR", col_name='1')
-                elif float(lw) < self.sza < float(up):
+                elif float(lw) <= self.sza < float(up):
                     self.uncs[s]['cos'] = self.extract_unc_from_grp(grp=inpt, name=f"{s}_ANGDATA_COSERROR_RANGE{sza_range}", col_name='1')
                 else:
                     writeLogFileAndPrint(f"SZA out of bound with sza={self.sza} with range={lw}:{up}")
@@ -535,7 +618,16 @@ class PIUDataStore:
 
     #### General Read Methods ####
     @staticmethod
-    def read_sixS_model(node):
+    def read_sixS_model(node: HDFRoot) -> dict:
+        """
+            reads six6 calculation from L1BQC.hdf file instead of running the relatively slow calculation twice
+
+            params:
+                node: L1BQC.hdf data
+            
+            returns:
+                res_sixS: contains py6s output for cast
+        """
         res_sixS = {}
 
         # Create a temporary group to pop date time columns
@@ -567,7 +659,13 @@ class PIUDataStore:
 
 
     ## UTILITIES ##
-    def get_regime_Name(self):
+    def get_regime_Name(self) -> str:
+        """
+            helper function for providing information for plotting/naming files
+            
+            returns:
+                processing level as string
+        """
         if self.cal_level == int(3):
             return "FRM_Sensor_Specific"
         elif self.cal_level == int(2):
@@ -577,6 +675,12 @@ class PIUDataStore:
 
     @staticmethod
     def instrument_calfile_name(i:str) -> str:
+        """
+            helper function for providing information for plotting/naming files
+
+            returns:
+                name of instrument class
+        """
         if i == "seabird":
             return "HYPEROCR"
         elif (i == "trios") | (i == "sorad"):
@@ -586,6 +690,15 @@ class PIUDataStore:
 
     @staticmethod
     def read_cal(grp: HDFGroup, s: str, cal_name: str, idx: Optional[str]=None, return_df: bool = False) -> Union[np.ndarray, pd.DataFrame]:
+        """
+            helper function for getting the correct information for a calibration file given the calfile name and column number/name
+
+            params:
+                grp: group to search for calibration information
+                cal_name: name of dataset
+                idx: optional, column index - must be string even if a number
+                return_df: optional, default false. If true returns cal data as pandas dataframe, else returns as numpy array
+        """
         try:
             if grp.getDataset(s + cal_name) is None:
                 print(f"Dataset does not exist {s} - {cal_name} - {idx}")
@@ -599,6 +712,12 @@ class PIUDataStore:
         return data
 
     def clipSL(self, s: str) -> None:
+        """
+            clips straylight data to calibrated pixels
+
+            params:
+                s: sensor name
+        """
         start = self.cal_start
         stop = self.cal_stop
         ind_wvl = self.ind_rad_wvl[s]
@@ -614,12 +733,13 @@ class PIUDataStore:
     @staticmethod
     def extract_factory_cal(node: HDFGroup, radcal: np.array, s: str) -> tuple[np.array, np.array]:
         """
+            extracts factory calibration
 
-        :param node: HDF root - full HDF file
-        :param radcal: HDF group containing radiometric calibration
-        :param s: dict key to append data to cCal and cCoef
-        :param cCal: dict for storing calibration
-        :param cCoef: dict for storing calibration coeficients 
+        params:
+            node: HDF root - full HDF file
+            radcal: HDF group containing radiometric calibration
+            s: dict key to append data to cCal and cCoef
+  
         """
 
         cal = np.asarray(list(radcal.columns['unc']))
@@ -638,9 +758,10 @@ class PIUDataStore:
     def extract_unc_from_grp(grp: HDFGroup, name: str, col_name: Optional[str] = None) -> Union[np.array, HDFDataset]:
         """
 
-        :param grp: HDF group to take dataset from
-        :param name: name of dataset
-        :param col_name: name of column to extract unc from
+        params:
+            grp: HDF group to take dataset from
+            name: name of dataset
+            col_name: name of column to extract unc from
         """
         ds = grp.getDataset(name)
         ds.datasetToColumns()
@@ -651,9 +772,38 @@ class PIUDataStore:
 
     # saves importing Utils to Instrument classes for interpolating outputs
     @staticmethod
-    def interp_common_wvls(columns, waves, newWaveBands, return_as_dict: bool=False) -> Union[np.array, OrderedDict]:
+    def interp_common_wvls(columns: OrderedDict, waves: np.array, newWaveBands: np.array, return_as_dict: bool=False) -> Union[np.array, OrderedDict]:
+        """
+            calls interp_common_wvls from utilities
+
+            params:
+                columns: Ordered dictionary of columns (with pixel wavelength as keys)
+                waves: wavelenths, x
+                newWaveBands: new x
+                return_as_dict: defaults to false. If true return type is ordered dict, else np.array
+        """
         return utils.interp_common_wvls(columns, waves, newWaveBands, return_as_dict)
 
     @staticmethod
-    def interpolateSamples(Columns, waves, newWavebands):
+    def interpolateSamples(Columns: OrderedDict, waves: np.array, newWavebands: np.array) -> np.array:
+        """
+            calls interpolateSamples from utilities. Designed to interpolate PDF samples used in SB uncertainty processing.
+
+            params:
+                columns: Ordered dictionary of columns (with pixel wavelength as keys)
+                waves: wavelenths, x
+                newWaveBands: new x
+
+        """
         return utils.interpolateSamples(Columns, waves, newWavebands)
+
+    # --- BUILTINS --- # 
+    def __iter__(self):
+        for sensor in self.sensors:
+            yield (
+            self.sensor, 
+            {
+                "coeff": self.coeff[sensor], 
+                "uncs":  self.uncs[sensor]
+            }
+        )

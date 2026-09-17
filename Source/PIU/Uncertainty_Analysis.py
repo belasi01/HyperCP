@@ -61,46 +61,51 @@ class Propagate:
     ])
 
     corr_matrix_Default_Lw: np.array = np.array([
-        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0]
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0]
     ])
 
     corr_matrix_Default_RRS: np.array = np.array([
-        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
     ], dtype=np.float64)
 
     def __init__(self, M: int = 100, cores: int = 1):
@@ -141,15 +146,17 @@ class Propagate:
             corr_between = None
 
 
-        unc = self.MCP.propagate_random(self.instruments,
-                                        mean_vals,
-                                        uncertainties,
-                                        corr_between=corr_between,
-                                        corr_x=corr_list,
-                                        output_vars=3,
-                                        # pdf_shape="truncated_gaussian",
-                                        # pdf_params={"min": 0},
-                                        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            unc = self.MCP.propagate_random(self.instruments,
+                                            mean_vals,
+                                            uncertainties,
+                                            corr_between=corr_between,
+                                            corr_x=corr_list,
+                                            output_vars=3,
+                                            # pdf_shape="truncated_gaussian",
+                                            # pdf_params={"min": 0},
+                                            )
 
         # separate uncertainties and sensor values from their lists - for clarity
         Es_unc, Li_unc, Lt_unc = [unc[i] for i in range(len(unc))]
@@ -171,17 +178,23 @@ class Propagate:
         :return: Lw uncertainty
         """
 
-        corr_list = ['rand', 'syst', 'rand', 'syst', 'syst', 'syst', 'syst', 'syst',
-                     'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst']
+        corr_list = [
+            'rand', 'rand', 'syst', 'rand', 'rand', 
+            'syst', 'syst', 'syst', 'syst', 'syst', 
+            'syst', 'syst', 'syst', 'syst', 'syst', 
+            'syst', 'syst'
+        ]
         if corr_between:
             corr_between = self.corr_matrix_Default_Lw
         else:
             corr_between = None
-        return self.MCP.propagate_standard(self.Lw,
-                                         mean_vals,
-                                         uncertainties,
-                                         corr_between=corr_between,
-                                         corr_x=corr_list)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            return self.MCP.propagate_standard(self.Lw,
+                                            mean_vals,
+                                            uncertainties,
+                                            corr_between=corr_between,
+                                            corr_x=corr_list)
 
     def Propagate_Lw_Convolved(self, mean_vals: list[np.array], uncertainties: list[np.array],
                           platform: str, wavebands: np.array) -> np.array:
@@ -200,8 +213,12 @@ class Propagate:
         :return: Lw uncertainty
         """
 
-        corr_list = ['rand', 'syst', 'rand', 'syst', 'syst', 'syst', 'syst', 'syst',
-                     'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst']
+        corr_list = [
+            'rand', 'rand', 'syst', 'rand', 'rand', 
+            'syst', 'syst', 'syst', 'syst', 'syst',  
+            'syst', 'syst', 'syst', 'syst', 'syst', 
+            'syst', 'syst'
+        ]
 
         self._platform = platform  # set platform which is used in self.RRS_Conv
         self._wavebands = wavebands  # set wavebands to be used in self.RRS_Conv
@@ -212,23 +229,27 @@ class Propagate:
         sys_unc[np.where(np.array(corr_list, dtype=str) == 'rand')] = 0.0
 
         # propagate random and systematic uncertainties separately
-        random = self.MCP.propagate_random(
-            self.Lw_Conv,
-            mean_vals,
-            rnd_unc,
-            corr_between=self.corr_matrix_Default_Lw,
-            # pdf_shape="truncated_gaussian",
-            # pdf_params={"min": 0},
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            random = self.MCP.propagate_random(
+                self.Lw_Conv,
+                mean_vals,
+                rnd_unc,
+                corr_between=self.corr_matrix_Default_Lw,
+                # pdf_shape="truncated_gaussian",
+                # pdf_params={"min": 0},
+            )
 
-        systematic = self.MCP.propagate_systematic(
-            self.Lw_Conv,
-            mean_vals,
-            sys_unc,
-            corr_between=self.corr_matrix_Default_Lw,
-            # pdf_shape="truncated_gaussian",
-            # pdf_params={"min": 0},
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            systematic = self.MCP.propagate_systematic(
+                self.Lw_Conv,
+                mean_vals,
+                sys_unc,
+                corr_between=self.corr_matrix_Default_Lw,
+                # pdf_shape="truncated_gaussian",
+                # pdf_params={"min": 0},
+            )
 
         return np.sqrt(random ** 2 + systematic ** 2)
 
@@ -249,21 +270,27 @@ class Propagate:
 
             will be replaced in the near future - for pixel by pixel method """
 
-        corr_list = ['rand', 'syst', 'rand', 'rand', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst',
-                     'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst']
+        corr_list = [
+            'rand', 'rand', 'syst', 'rand', 'rand', 'rand', 'rand', 
+            'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst',
+            'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 
+            'syst', 'syst', 'syst', 'syst'
+        ]
         if corr_between:
             corr_between = self.corr_matrix_Default_RRS
         else:
             corr_between = None
-        return self.MCP.propagate_standard(
-            self.RRS,
-            mean_vals,
-            uncertainties,
-            corr_between=corr_between,
-            corr_x=corr_list,
-            # pdf_shape="truncated_gaussian",
-            # pdf_params={"min": 0},
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            return self.MCP.propagate_standard(
+                self.RRS,
+                mean_vals,
+                uncertainties,
+                corr_between=corr_between,
+                corr_x=corr_list,
+                # pdf_shape="truncated_gaussian",
+                # pdf_params={"min": 0},
+            )
 
     def Propagate_RRS_Convolved(self, mean_vals: list[np.array], uncertainties: list[np.array], platform: str,
                                 wavebands: np.array) -> np.array:
@@ -285,8 +312,12 @@ class Propagate:
 
             will be replaced in the near future - for pixel by pixel method """
 
-        corr_list = ['rand', 'syst', 'rand', 'rand', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst',
-                     'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst']
+        corr_list = [
+            'rand', 'rand', 'syst', 'rand', 'rand', 'rand', 'rand', 
+            'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst',
+            'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 'syst', 
+            'syst', 'syst', 'syst', 'syst'
+        ]
 
         self._platform = platform  # set platform which is used in self.RRS_Conv
         self._wavebands = wavebands  # set wavebands to be used in self.RRS_Conv
@@ -438,22 +469,22 @@ class Propagate:
     # Measurement Functions
     def instruments(self, ESLIGHT, ESDARK, LILIGHT, LIDARK, LTLIGHT, LTDARK, ESCal, LICal, LTCal, ESStab, LIStab, LTStab,
                     ESLin, LILin, LTLin, ESStray, LIStray, LTStray, EST, LIT, LTT, LIPol, LTPol, ESCos, 
-        ) -> tuple[np.array]:
+    ) -> tuple[np.array]:
         """ Instrument specific uncertainties measurement function """
         esSignal = np.array((ESLIGHT - ESDARK)*ESCal*ESStab*ESLin*ESStray*EST*ESCos)
         liSignal = np.array((LILIGHT - LIDARK)*LICal*LIStab*LILin*LIStray*LIT*LIPol)
         ltSignal = np.array((LTLIGHT - LTDARK)*LTCal*LTStab*LTLin*LTStray*LTT*LTPol)
         # add integration time adjustment to measurement function
-        if (liSignal == 0).all():
-            self.cal_int['LI'] = 0
-            self.int_time['LI'] = 1
-            self.cal_int['LT'] = 0
-            self.int_time['LT'] = 1
+        # if (liSignal == 0).all():
+        #     self.cal_int['LI'] = 0
+        #     self.int_time['LI'] = 1
+        #     self.cal_int['LT'] = 0
+        #     self.int_time['LT'] = 1\
 
         return (
-            esSignal * (self.cal_int["ES"]/self.int_time["ES"]),
-            liSignal * (self.cal_int["LI"]/self.int_time["LI"]),
-            ltSignal * (self.cal_int["LT"]/self.int_time["LT"])
+            esSignal,  # * (self.cal_int["ES"]/self.int_time["ES"]),
+            liSignal,  # * (self.cal_int["LI"]/self.int_time["LI"]),
+            ltSignal,  # * (self.cal_int["LT"]/self.int_time["LT"])
         )
 
     @staticmethod
@@ -521,19 +552,19 @@ class Propagate:
         return Hyperspec
 
     @staticmethod
-    def Lw(lt, rhoVec, li, c_li, c_lt, cstab_li, cstab_lt, clin_li, clin_lt, cstray_li, cstray_lt, cT_li, cT_lt, cpol_li, cpol_lt):
+    def Lw(LTLIGHT, LTDARK, rhoVec, LILIGHT, LIDARK, c_li, c_lt, cstab_li, cstab_lt, clin_li, clin_lt, cstray_li, cstray_lt, cT_li, cT_lt, cpol_li, cpol_lt):
         """ Lw Class based branch measurment function """
 
         # Inputs come from punpy based on BaseInstrument ClassBasedL2 lw_means and uncertainties
-        li_signal = li * c_li * cstab_li * clin_li * cstray_li * cT_li * cpol_li
-        lt_signal = lt * c_lt * cstab_lt * clin_lt * cstray_lt * cT_lt * cpol_lt
+        li_signal = (LILIGHT - LIDARK) * c_li * cstab_li * clin_li * cstray_li * cT_li * cpol_li
+        lt_signal = (LTLIGHT - LTDARK) * c_lt * cstab_lt * clin_lt * cstray_lt * cT_lt * cpol_lt
 
         return lt_signal - (li_signal * rhoVec)
 
-    def Lw_Conv(self, lt, rhoVec, li, c_li, c_lt, cstab_li, cstab_lt, clin_li, clin_lt, cstray_li, cstray_lt, cT_li, cT_lt, cpol_li, cpol_lt):
+    def Lw_Conv(self, LTLIGHT, LTDARK, rhoVec, LILIGHT, LIDARK, c_li, c_lt, cstab_li, cstab_lt, clin_li, clin_lt, cstray_li, cstray_lt, cT_li, cT_lt, cpol_li, cpol_lt):
         """ Lw Class based branch measurment function """
-        li_signal = li * c_li * cstab_li * clin_li * cstray_li * cT_li * cpol_li
-        lt_signal = lt * c_lt * cstab_lt * clin_lt * cstray_lt * cT_lt * cpol_lt
+        li_signal = (LILIGHT - LIDARK) * c_li * cstab_li * clin_li * cstray_li * cT_li * cpol_li
+        lt_signal = (LTLIGHT - LTDARK) * c_lt * cstab_lt * clin_lt * cstray_lt * cT_lt * cpol_lt
 
         func = self.def_sensor_mfunc(self._platform)  # get mfunc per platform, saves us from making 8 mfuncs
 
@@ -544,23 +575,28 @@ class Propagate:
         return ltConv - (liConv * rhoConv)
 
     @staticmethod
-    def RRS(lt, rhoVec, li, es, c_es, c_li, c_lt, cstab_es, cstab_li, cstab_lt, clin_es, clin_li, clin_lt, cstray_es, cstray_li, cstray_lt,
+    def RRS(LTLIGHT, LTDARK, rhoVec, LILIGHT, LIDARK, ESLIGHT, ESDARK, c_es, c_li, c_lt, cstab_es, cstab_li, cstab_lt, clin_es, clin_li, clin_lt, cstray_es, cstray_li, cstray_lt,
             cT_es, cT_li, cT_lt, cpol_li, cpol_lt, ccos):
         """ Rrs Class based branch measurment function """
-        es_signal = es * c_es * cstab_es * clin_es * cstray_es * cT_es * ccos
-        li_signal = li * c_li * cstab_li * clin_li * cstray_li * cT_li * cpol_li
-        lt_signal = lt * c_lt * cstab_lt * clin_lt * cstray_lt * cT_lt * cpol_lt
+        es_signal = (ESLIGHT - ESDARK) * c_es * cstab_es * clin_es * cstray_es * cT_es * ccos
+        li_signal = (LILIGHT - LIDARK) * c_li * cstab_li * clin_li * cstray_li * cT_li * cpol_li
+        lt_signal = (LTLIGHT - LTDARK) * c_lt * cstab_lt * clin_lt * cstray_lt * cT_lt * cpol_lt
 
         lw = lt_signal - (rhoVec*li_signal)
-        lw[np.where(lw < 0)] = 0
-        return lw/es_signal
+        # lw[np.where(lw < 0)] = 0
+        msk = np.where(es_signal == 0)
+        rrs = lw/es_signal
+        rrs[msk] = 0
 
-    def RRS_Conv(self, lt, rhoVec, li, es, c_es, c_li, c_lt, cstab_es, cstab_li, cstab_lt, clin_es, clin_li, clin_lt, cstray_es, cstray_li, cstray_lt,
+        return rrs
+
+
+    def RRS_Conv(self, LTLIGHT, LTDARK, rhoVec, LILIGHT, LIDARK, ESLIGHT, ESDARK, c_es, c_li, c_lt, cstab_es, cstab_li, cstab_lt, clin_es, clin_li, clin_lt, cstray_es, cstray_li, cstray_lt,
             cT_es, cT_li, cT_lt, cpol_li, cpol_lt, ccos):
         """ Rrs Class based branch measurment function """
-        es_signal = es * c_es * cstab_es * clin_es * cstray_es * cT_es * ccos
-        li_signal = li * c_li * cstab_li * clin_li * cstray_li * cT_li * cpol_li
-        lt_signal = lt * c_lt * cstab_lt * clin_lt * cstray_lt * cT_lt * cpol_lt
+        es_signal = (ESLIGHT - ESDARK) * c_es * cstab_es * clin_es * cstray_es * cT_es * ccos
+        li_signal = (LILIGHT - LIDARK) * c_li * cstab_li * clin_li * cstray_li * cT_li * cpol_li
+        lt_signal = (LTLIGHT - LTDARK) * c_lt * cstab_lt * clin_lt * cstray_lt * cT_lt * cpol_lt
 
         func = self.def_sensor_mfunc(self._platform)  # get mfunc per platform, saves us from making 8 mfuncs
 
@@ -570,8 +606,11 @@ class Propagate:
         rhoConv = func(rhoVec, self._wavebands)
 
         lw = ltConv - (rhoConv*liConv)
-        lw[np.where(lw < 0)] = 0
-        return lw/esConv  # calculate Rrs
+        # lw[np.where(lw < 0)] = 0
+        msk = np.where(esConv == 0)
+        rrsConv = lw/esConv
+        rrsConv[msk] = 0
+        return  rrsConv
 
     @staticmethod
     def Lw_FRM(lt, rho, li):
