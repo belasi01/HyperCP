@@ -1,20 +1,3 @@
-######################################################################################
-# Telemetry Definition File:
-#
-# Type: UMTWR sentences
-# Descritption: University of Maine instrument tracker tower, frames definining the orientation
-# Version: 0
-#
-# Format:
-#   UMTWR,heading_sas,heading_ship,heading_accuracy_ship,heading_motion,heading_accuracy_motion,position_tower,status_tower,azimuth_sun,elevation_sun<CR><LF>
-#
-# Creation Date: Feb 4, 2021
-# Author: Nils Haentjens
-#
-# History:
-#   2021-02-04: Creation of file
-#######################################################################################
-
 # HEADER
 VLF_INSTRUMENT UMTWR '' 5 AS 0 NONE
 

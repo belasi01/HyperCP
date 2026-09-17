@@ -17,10 +17,17 @@ match_pysas_leg1_stations.py (memes seuils convenus avec Simon : 1 km / 3h, conf
 resolus par proximite temporelle) -- seule la lecture des casts differe (read_leg2_casts
 au lieu de read_leg_casts).
 
+--missing-only (read_all_sampled_casts + existing_l2_stations) : mode different, pour
+creer une station pySAS SEULE (sans COPS ni HS6) partout ou un echantillon
+biogeochimique (HPLC, CHN, CHL, Ap, Cyto, SPM, IFCB, CDOM, peu importe lequel) a ete
+recolte mais qu'aucun dossier .../L2/YYYYMMDD_StationXXX/ n'existe encore -- le critere
+HPLC+CHN de read_leg2_casts ne s'applique pas ici.
+
 Usage:
     conda activate hypercp
-    python match_pysas_leg2_stations.py                 # rapport seulement
+    python match_pysas_leg2_stations.py                 # rapport seulement (critere HPLC+CHN)
     python match_pysas_leg2_stations.py --apply          # cree les dossiers + copie
+    python match_pysas_leg2_stations.py --missing-only --apply   # stations manquantes de L2, tout parametre
 """
 import os
 import re
@@ -89,18 +96,9 @@ def read_btl_window(filename):
     return {"lat": lat, "lon": lon, "window_start": window_start, "window_end": window_end}
 
 
-def read_leg2_casts(logbook_path, btl_dir):
-    """Casts (Station, CTD cast) de la feuille Samples avec au moins un echantillon
-    HPLC ET un CHN, avec fenetre temporelle/position issues du .btl local correspondant."""
-    df = pd.read_excel(logbook_path, sheet_name="Samples", header=4)
-    df = df.dropna(subset=["Station", "CTD cast"])  # exclut glace/echantillons hors-rosette
-
-    matched = df.groupby(["Station", "CTD cast"]).filter(
-        lambda g: (g["HPLC"] == "X").any() and (g["CHN"] == "X").any()
-    )
-    casts_meta = matched.drop_duplicates(subset=["Station", "CTD cast"])[["Station", "CTD cast"]]
-    casts_meta = casts_meta.rename(columns={"Station": "station", "CTD cast": "cast"})
-
+def _load_cast_windows(casts_meta, btl_dir):
+    """casts_meta: colonnes [station, cast] (dedupliquees) -> ajoute date/lat/lon/
+    window_start/window_end lus depuis le .btl local de chaque cast."""
     rows, missing = [], []
     for r in casts_meta.itertuples(index=False):
         cast_num = int(r.cast)
@@ -124,9 +122,57 @@ def read_leg2_casts(logbook_path, btl_dir):
     return pd.DataFrame(rows).reset_index(drop=True)
 
 
-def main(apply_changes, max_dist_km, max_offset_hours, use_symlink):
+def read_leg2_casts(logbook_path, btl_dir):
+    """Casts (Station, CTD cast) de la feuille Samples avec au moins un echantillon
+    HPLC ET un CHN, avec fenetre temporelle/position issues du .btl local correspondant."""
+    df = pd.read_excel(logbook_path, sheet_name="Samples", header=4)
+    df = df.dropna(subset=["Station", "CTD cast"])  # exclut glace/echantillons hors-rosette
+
+    matched = df.groupby(["Station", "CTD cast"]).filter(
+        lambda g: (g["HPLC"] == "X").any() and (g["CHN"] == "X").any()
+    )
+    casts_meta = matched.drop_duplicates(subset=["Station", "CTD cast"])[["Station", "CTD cast"]]
+    casts_meta = casts_meta.rename(columns={"Station": "station", "CTD cast": "cast"})
+    return _load_cast_windows(casts_meta, btl_dir)
+
+
+def read_all_sampled_casts(logbook_path, btl_dir):
+    """Tous les casts (Station, CTD cast) de la feuille Samples, quel que soit le
+    parametre biogeochimique echantillonne (HPLC, CHN, CHL, Ap, Cyto, SPM, IFCB, CDOM,
+    ...) -- contrairement a read_leg2_casts qui exige HPLC ET CHN ensemble. Utilise pour
+    completer les stations pySAS manquantes (voir main(..., missing_only=True))."""
+    df = pd.read_excel(logbook_path, sheet_name="Samples", header=4)
+    df = df.dropna(subset=["Station", "CTD cast"])  # exclut glace/echantillons hors-rosette
+    casts_meta = df.drop_duplicates(subset=["Station", "CTD cast"])[["Station", "CTD cast"]]
+    casts_meta = casts_meta.rename(columns={"Station": "station", "CTD cast": "cast"})
+    return _load_cast_windows(casts_meta, btl_dir)
+
+
+def existing_l2_stations(l2_root=None):
+    """Noms de station (sans prefixe date, ex. 'CS4-1b') deja presents comme dossier
+    .../L2/YYYYMMDD_StationXXX/, quel que soit l'instrument qui l'a cree (cops/, iops/,
+    pySAS/ seul, ...)."""
+    l2_root = l2_root or m1.L2_ROOT
+    existing = set()
+    for name in os.listdir(l2_root):
+        m = re.match(r"\d{8}_Station(.+)", name)
+        if m:
+            existing.add(m.group(1))
+    return existing
+
+
+def main(apply_changes, max_dist_km, max_offset_hours, use_symlink, missing_only=False):
     max_offset = pd.Timedelta(hours=max_offset_hours)
-    casts = read_leg2_casts(LOGBOOK_PATH, BTL_DIR)
+    if missing_only:
+        casts = read_all_sampled_casts(LOGBOOK_PATH, BTL_DIR)
+        existing = existing_l2_stations()
+        casts = casts[~casts["station"].isin(existing)].reset_index(drop=True)
+        print(f"{len(casts)} station(s) échantillonnée(s) sans dossier L2 existant : "
+              f"{sorted(casts['station'].unique())}\n")
+        if casts.empty:
+            return casts
+    else:
+        casts = read_leg2_casts(LOGBOOK_PATH, BTL_DIR)
     matches = m1.compute_all_matches(casts, max_dist_km, max_offset)
 
     rows = []
@@ -186,5 +232,11 @@ if __name__ == "__main__":
                          help="Distance max pour un match spatial de repli (defaut: 1.0 km)")
     parser.add_argument("--max-offset-hours", type=float, default=3.0,
                          help="Ecart temporel max tolere pour un match spatial de repli (defaut: 3h)")
+    parser.add_argument("--missing-only", action="store_true",
+                         help="Au lieu du critere HPLC+CHN habituel : TOUTES les stations "
+                              "echantillonnees (n'importe quel parametre biogeochimique) qui n'ont "
+                              "PAS encore de dossier .../L2/YYYYMMDD_StationXXX/ -- pour creer une "
+                              "station pySAS seule (sans COPS ni HS6) la ou des echantillons ont ete "
+                              "recoltes mais aucun instrument optique deploye.")
     args = parser.parse_args()
-    main(args.apply, args.max_distance_km, args.max_offset_hours, args.symlink)
+    main(args.apply, args.max_distance_km, args.max_offset_hours, args.symlink, args.missing_only)

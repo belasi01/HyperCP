@@ -1,22 +1,3 @@
-#########################################################################################
-# Telemetry Definition File:
-#
-# Type: $GPRMC sentences (NMEA 0183 standard version 3.01)
-# Description: Recommended Minimum Specific GPS/Transit Data
-# Version: NMEA 0183 standard, version 3.01
-#
-# Notes:
-#   Version 3.01 differs from version 2.30 in that the Mode field is absent
-#
-# Creation Date: June 30, 2009
-# Author: Scott Feener
-#
-# Template History:
-#   2009-06-30, SF: Template created
-#
-##########################################################################################
-
-
 VLF_INSTRUMENT $GPRMC '' 6 AS 0 NONE
 
 FIELD NONE ',' 1 AS 0 DELIMITER
@@ -56,4 +37,3 @@ FIELD NONE '*' 1 AS 0 DELIMITER
 NMEA_CHECKSUM NONE '' V AI 0 COUNT
 
 TERMINATOR NONE '\x0D\x0A' 2 AS 0 DELIMITER
-

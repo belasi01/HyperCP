@@ -39,7 +39,7 @@ else
 fi
 
 echo "=========================================================================="
-echo "🌍 [RIMOUSKI] Starting remote processing for date: ${DATE_TARGET}"
+echo "🌍 [Starting remote processing for date: ${DATE_TARGET}"
 echo "=========================================================================="
 
 # On crée les dossiers locaux s'ils n'existent pas
