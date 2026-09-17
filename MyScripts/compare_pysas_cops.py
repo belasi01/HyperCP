@@ -134,7 +134,24 @@ def average_cops_rrs(casts, variant):
     return wl_ref, np.nanmean(np.vstack(specs), axis=0)
 
 
-def find_pysas_casts_in_window(date_str, window_start, window_end):
+def haversine_km(lat1, lon1, lat2, lon2):
+    """Distance grand-cercle (km) entre deux points lat/lon (degrés) -- utilisé pour
+    contraindre spatialement une fenêtre temporelle étendue (--window-pad-min +
+    --max-distance-km) à la même station, pas à un cast pris en transit vers la
+    prochaine."""
+    r = 6371.0088
+    p1, p2 = np.radians(lat1), np.radians(lat2)
+    dp = np.radians(lat2 - lat1)
+    dl = np.radians(lon2 - lon1)
+    a = np.sin(dp / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2
+    return 2 * r * np.arcsin(np.sqrt(a))
+
+
+def find_pysas_casts_in_window(date_str, window_start, window_end, ref_latlon=None, max_distance_km=None):
+    """ref_latlon=(lat, lon) + max_distance_km : restreint en plus aux casts pySAS à
+    moins de max_distance_km de ref_latlon -- pour qu'une fenêtre temporelle étendue
+    (window_pad_min) ne ramène pas des mesures prises en transit vers la station
+    suivante."""
     df_casts = rea.load_casts(date_str)
     cast_dt = [
         pd.Timestamp(dating.timeTag2ToDateTime(
@@ -143,7 +160,11 @@ def find_pysas_casts_in_window(date_str, window_start, window_end):
     ]
     df_casts = df_casts.assign(_dt=cast_dt)
     mask = (df_casts["_dt"] >= window_start) & (df_casts["_dt"] <= window_end)
-    return df_casts[mask].drop(columns=["_dt"]).reset_index(drop=True)
+    df_casts = df_casts[mask].drop(columns=["_dt"]).reset_index(drop=True)
+    if ref_latlon is not None and max_distance_km is not None and not df_casts.empty:
+        dist = haversine_km(df_casts["Latitude"], df_casts["Longitude"], ref_latlon[0], ref_latlon[1])
+        df_casts = df_casts[dist <= max_distance_km].reset_index(drop=True)
+    return df_casts
 
 
 def _copy_or_link(src, dst, use_symlink):
@@ -428,7 +449,7 @@ def plot_best_method_uncertainty(out_path, variant, best_method, cops_casts, cop
     plt.close(fig)
 
 
-def main(station_path, use_symlink=False, window_pad_min=0.0):
+def main(station_path, use_symlink=False, window_pad_min=0.0, max_distance_km=None):
     station_path = os.path.abspath(station_path)
     date_str = parse_station_date(station_path)
     station_label = os.path.basename(station_path)
@@ -438,17 +459,21 @@ def main(station_path, use_symlink=False, window_pad_min=0.0):
     window_start = min(c["start"] for c in casts)
     window_end = max(c["end"] for c in casts)
     cops_means = {variant: average_cops_rrs(casts, variant) for variant in COPS_VARIANTS}
+    ref_latlon = (np.mean([c["lat"] for c in casts]), np.mean([c["lon"] for c in casts]))
+    extras = []
     if window_pad_min:
         pad = pd.Timedelta(minutes=window_pad_min)
         window_start -= pad
         window_end += pad
-        print(f"📍 {station_label} | fenêtre COPS UTC : {window_start} -> {window_end} "
-              f"({len(casts)} cast(s) retenu(s), fenêtre étendue de +/-{window_pad_min:g} min)")
-    else:
-        print(f"📍 {station_label} | fenêtre COPS UTC : {window_start} -> {window_end} "
-              f"({len(casts)} cast(s) retenu(s))")
+        extras.append(f"fenêtre étendue de +/-{window_pad_min:g} min")
+    if max_distance_km:
+        extras.append(f"restreint à {max_distance_km:g} km de {ref_latlon}")
+    extra_str = f", {', '.join(extras)}" if extras else ""
+    print(f"📍 {station_label} | fenêtre COPS UTC : {window_start} -> {window_end} "
+          f"({len(casts)} cast(s) retenu(s){extra_str})")
 
-    df_window = find_pysas_casts_in_window(date_str, window_start, window_end)
+    df_window = find_pysas_casts_in_window(date_str, window_start, window_end,
+                                            ref_latlon=ref_latlon, max_distance_km=max_distance_km)
     if df_window.empty:
         raise ValueError("Aucun cast pySAS trouvé dans la fenêtre temporelle COPS -- "
                           "vérifier que la date a été traitée jusqu'à extract_l2_qc_tables.py.")
@@ -1614,7 +1639,13 @@ if __name__ == "__main__":
                          help="Mode Rrs seulement : étend la fenêtre temporelle COPS de +/- N minutes "
                               "avant de chercher les casts pySAS correspondants -- utile pour une station "
                               "où peu de casts pySAS chevauchent la fenêtre COPS stricte (ex. après retrait "
-                              "d'un cast contaminé). Défaut 0 (fenêtre stricte, comportement inchangé).")
+                              "d'un cast contaminé, ou pySAS pas encore démarré au moment du cast COPS). "
+                              "Défaut 0 (fenêtre stricte, comportement inchangé).")
+    parser.add_argument("--max-distance-km", type=float, default=None,
+                         help="À utiliser avec --window-pad-min : restreint les casts pySAS retenus dans "
+                              "la fenêtre étendue à ceux à moins de N km de la position moyenne des casts "
+                              "COPS -- pour ne pas ramener une mesure prise en transit vers la station "
+                              "suivante. Sans effet si --window-pad-min vaut 0.")
     args = parser.parse_args()
 
     if args.all or args.station:
@@ -1644,6 +1675,7 @@ if __name__ == "__main__":
         print(f"📋 {len(station_paths)} station(s) à traiter (mode Rrs)")
         for station_path in station_paths:
             try:
-                main(station_path, use_symlink=args.symlink, window_pad_min=args.window_pad_min)
+                main(station_path, use_symlink=args.symlink, window_pad_min=args.window_pad_min,
+                     max_distance_km=args.max_distance_km)
             except Exception as e:
                 print(f"❌ [{os.path.basename(station_path)}] {e}")
